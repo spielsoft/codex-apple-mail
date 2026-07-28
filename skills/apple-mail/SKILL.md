@@ -1,6 +1,6 @@
 ---
 name: apple-mail
-description: Read and organize email in Apple's Mail app on macOS through transparent background scripts, without Computer Control. Use for mailbox discovery, bounded message listing or body retrieval, marking messages read or unread, creating local mailboxes, moving messages between local mailboxes, or moving Gmail Inbox messages to local On My Mac mailboxes with audited Gmail label handling.
+description: Read and organize email in Apple's Mail app on macOS through transparent background scripts, without Computer Control. Use for mailbox discovery, bounded message listing including flag colors, body retrieval, marking messages read or unread, creating local mailboxes, moving messages between local mailboxes, or moving Gmail Inbox messages to local On My Mac mailboxes with audited Gmail label handling.
 ---
 
 # Apple Mail
@@ -10,7 +10,8 @@ control Mail's UI or issue ad hoc AppleScript.
 
 ## Choose the workflow
 
-- For discovery, listing, or reading: run a bounded read-only command.
+- For discovery, listing including flag labels, or reading: run a bounded
+  read-only command.
 - For a change: list exact messages, create a hashed plan, inspect it, dry-run
   it, then apply only when the user has authorized that scope.
 - For Gmail Inbox to local: use `plan-gmail-transfer`; never substitute a Mail

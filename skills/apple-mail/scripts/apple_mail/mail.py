@@ -4,8 +4,28 @@ from pathlib import Path
 from typing import Dict, Iterable, List
 
 
+FLAG_INDEX_TO_COLOR = {
+    -1: "none",
+    0: "red",
+    1: "orange",
+    2: "yellow",
+    3: "green",
+    4: "blue",
+    5: "purple",
+    6: "gray",
+}
+
+
 class MailScriptError(RuntimeError):
     pass
+
+
+def flag_color_from_index(value: str) -> str:
+    try:
+        flag_index = int(value)
+    except (TypeError, ValueError):
+        return "unknown"
+    return FLAG_INDEX_TO_COLOR.get(flag_index, "unknown")
 
 
 def unescape_field(value: str) -> str:
@@ -34,9 +54,12 @@ def parse_tsv(text: str) -> List[Dict[str, str]]:
     for row in rows[1:]:
         if len(row) < len(header):
             row += [""] * (len(header) - len(row))
-        parsed.append(
-            {key: unescape_field(value) for key, value in zip(header, row)}
-        )
+        record = {
+            key: unescape_field(value) for key, value in zip(header, row)
+        }
+        if record.get("TYPE") == "MESSAGE" and "FLAG_INDEX" in record:
+            record["FLAG_COLOR"] = flag_color_from_index(record["FLAG_INDEX"])
+        parsed.append(record)
     return parsed
 
 

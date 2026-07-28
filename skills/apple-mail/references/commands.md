@@ -22,6 +22,28 @@ entry point.
   --body-limit 50000
 ```
 
+Each `MESSAGE` row from `list` includes:
+
+- `FLAGGED`: Mail's existing Boolean flagged state;
+- `FLAG_INDEX`: Mail's integer flag index; and
+- `FLAG_COLOR`: a stable color name derived from that index.
+
+The Mail 16 flag mapping is:
+
+| `FLAG_INDEX` | `FLAG_COLOR` |
+| ---: | --- |
+| `-1` | `none` |
+| `0` | `red` |
+| `1` | `orange` |
+| `2` | `yellow` |
+| `3` | `green` |
+| `4` | `blue` |
+| `5` | `purple` |
+| `6` | `gray` |
+
+Unknown future indices are reported as `unknown` while preserving the raw
+index. Listing flag metadata is read-only; the skill does not change flags.
+
 ## Selection JSON
 
 Use a list or an object containing `messages`, `items`, or `records`:

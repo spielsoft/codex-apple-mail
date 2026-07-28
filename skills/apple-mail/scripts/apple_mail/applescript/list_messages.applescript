@@ -70,7 +70,7 @@ on run argv
 	if startIndex < 1 then error "Start must be positive"
 	if batchLimit < 1 or batchLimit > 250 then error "Limit is outside the supported range"
 	set sourceMailbox to my resolveSource(sourceKind, sourceName, sourcePath)
-	set outputLines to {"TYPE" & tab & "SEQUENCE" & tab & "MAIL_ID" & tab & "MESSAGE_ID" & tab & "SUBJECT" & tab & "SENDER" & tab & "DATE_SENT" & tab & "DATE_RECEIVED" & tab & "READ" & tab & "FLAGGED" & tab & "JUNK" & tab & "SIZE"}
+	set outputLines to {"TYPE" & tab & "SEQUENCE" & tab & "MAIL_ID" & tab & "MESSAGE_ID" & tab & "SUBJECT" & tab & "SENDER" & tab & "DATE_SENT" & tab & "DATE_RECEIVED" & tab & "READ" & tab & "FLAGGED" & tab & "FLAG_INDEX" & tab & "JUNK" & tab & "SIZE"}
 	tell application "Mail"
 		set totalMessages to count of messages of sourceMailbox
 		if startIndex <= totalMessages then
@@ -86,6 +86,7 @@ on run argv
 				set messageLine to messageLine & tab & my isoDate(«class rdrc» of theMessage)
 				set messageLine to messageLine & tab & («class isrd» of theMessage as text)
 				set messageLine to messageLine & tab & («class isfl» of theMessage as text)
+				set messageLine to messageLine & tab & («class fidx» of theMessage as text)
 				set messageLine to messageLine & tab & («class isjk» of theMessage as text)
 				set messageLine to messageLine & tab & («class msze» of theMessage as text)
 				set end of outputLines to messageLine

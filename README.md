@@ -3,9 +3,9 @@
 A generic Codex plugin for reading and organizing Apple Mail through
 transparent background scripts—without Computer Control.
 
-Capabilities include mailbox discovery, bounded message reading, read/unread
-changes, local mailbox creation, local-to-local moves, and verified Gmail
-Inbox-to-local transfers.
+Capabilities include mailbox discovery, bounded message reading with flag
+colors, read/unread changes, local mailbox creation, local-to-local moves, and
+verified Gmail Inbox-to-local transfers.
 
 The plugin manifest is [.codex-plugin/plugin.json](.codex-plugin/plugin.json)
 and the bundled skill is [skills/apple-mail/SKILL.md](skills/apple-mail/SKILL.md).

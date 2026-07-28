@@ -21,9 +21,13 @@ scripts/apple-mail get \
   --body-limit 50000
 ```
 
-`list` returns Mail order and never retrieves bodies. `get` binds by indexed
-numeric ID, corroborates RFC Message-ID, and bounds body output to 100,000
-characters.
+`list` returns Mail order and never retrieves bodies. Message rows retain the
+Boolean `FLAGGED` field and also include Mail's integer `FLAG_INDEX` plus a
+derived `FLAG_COLOR`: `-1` is `none`, and indices `0` through `6` are `red`,
+`orange`, `yellow`, `green`, `blue`, `purple`, and `gray`. Unknown indices are
+reported as `unknown` without discarding the raw value. Listing does not change
+flags. `get` binds by indexed numeric ID, corroborates RFC Message-ID, and
+bounds body output to 100,000 characters.
 
 ## Selection format
 
