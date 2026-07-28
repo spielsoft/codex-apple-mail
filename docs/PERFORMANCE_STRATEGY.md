@@ -18,9 +18,10 @@ For Gmail Inbox-to-local:
 
 1. Resolve the account, source, and destination once.
 2. Bind and validate every source by numeric ID.
-3. Capture the candidate count before selector padding, then submit one bulk
-   `duplicate` command using a direct numeric-ID-filtered Mail object specifier.
-4. Traverse the local destination once and verify the complete set.
+3. Submit one bulk `duplicate` command using a direct numeric-ID-filtered Mail
+   object specifier capped at ten transfer messages.
+4. Refresh destination Message-IDs after `duplicate` and corroborate only the
+   matching candidates. Treat that result as the local-copy barrier.
 5. Remove only Gmail `INBOX` with per-message responses and rollback.
 6. Request one Mail synchronization.
 7. Perform one final indexed source check.
@@ -30,8 +31,10 @@ For local-to-local filing, use the same binding stage followed by one bulk
 
 ## Expected complexity
 
-The Mail work should scale with batch size plus one destination traversal, not
-batch size multiplied by source-mailbox size. Batches are capped at 250.
+The Mail work should scale with batch size plus one destination Message-ID
+snapshot, not batch size multiplied by source-mailbox size. General metadata
+and local operations are capped at 250; Gmail transfers and batch body reads
+are capped at ten.
 
 ## Live validation gate
 

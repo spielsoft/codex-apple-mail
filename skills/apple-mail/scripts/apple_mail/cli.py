@@ -100,11 +100,44 @@ def command_get(args: argparse.Namespace) -> None:
     )
 
 
+def command_get_batch(args: argparse.Namespace) -> None:
+    source = _source_from_args(args)
+    plan = build_message_plan(
+        "set_read",
+        source,
+        _selection_records(args.selection),
+        target_read=True,
+    )
+    messages = plan["messages"]
+    if len(messages) > 10:
+        raise ValueError("Body batch size cannot exceed 10 messages")
+    arguments = _source_script_arguments(source) + [str(args.body_limit)]
+    for message in messages:
+        arguments.extend(
+            [
+                str(message["mail_id"]),
+                str(message["message_id"]),
+                str(message["subject"]),
+                str(message.get("sender", "")),
+                str(message["received_at"])[:19],
+                "true" if message["read"] else "false",
+            ]
+        )
+    _print_json(
+        MailRunner(APPLESCRIPT_DIR, args.timeout).run_tsv(
+            "get_messages.applescript", arguments
+        )
+    )
+
+
 def command_plan_transfer(args: argparse.Namespace) -> None:
+    records = _selection_records(args.selection)
+    if len(records) > 10:
+        raise ValueError("Gmail transfer batch size cannot exceed 10 messages")
     plan = build_message_plan(
         "gmail_inbox_to_local",
         account_source(args.account, "INBOX"),
-        _selection_records(args.selection),
+        records,
         destination=local_destination(args.destination),
     )
     _write_plan(plan, args.output)
@@ -255,6 +288,12 @@ def build_parser() -> argparse.ArgumentParser:
     get_parser.add_argument("--message-id", required=True)
     get_parser.add_argument("--body-limit", type=int, default=50000)
     get_parser.set_defaults(handler=command_get)
+
+    get_batch = subparsers.add_parser("get-batch")
+    _add_source_arguments(get_batch)
+    get_batch.add_argument("--selection", type=Path, required=True)
+    get_batch.add_argument("--body-limit", type=int, default=50000)
+    get_batch.set_defaults(handler=command_get_batch)
 
     transfer = subparsers.add_parser("plan-gmail-transfer")
     transfer.add_argument("--account", required=True)

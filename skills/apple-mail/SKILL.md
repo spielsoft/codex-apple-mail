@@ -11,7 +11,7 @@ control Mail's UI or issue ad hoc AppleScript.
 ## Execution permission
 
 Apple Mail access uses macOS Apple Events, which the default command sandbox
-blocks. For `discover`, `list`, `get`, `verify`, `probe-copy`,
+blocks. For `discover`, `list`, `get`, `get-batch`, `verify`, `probe-copy`,
 `apply --execute`, and `authorize`, make the first shell-tool call with
 `sandbox_permissions: "require_escalated"` (or the surface's equivalent scoped
 permission) and a concise Apple Mail justification. Do not try the command in
@@ -21,7 +21,8 @@ permission immediately; it does not override the active Codex approval policy.
 ## Choose the workflow
 
 - For discovery, listing including flag labels, or reading: run a bounded
-  read-only command.
+  read-only command. Prefer one `get-batch` call over concurrent singleton
+  `get` calls when reading two to ten messages from one mailbox.
 - For a change: list exact messages, create a hashed plan, inspect it, dry-run
   it, then apply only when the user has authorized that scope.
 - For Gmail Inbox to local: use `plan-gmail-transfer`; never substitute a Mail
@@ -37,8 +38,8 @@ selection schema.
 
 1. Keep message-derived artifacts private and outside source control.
 2. Limit metadata listings to at most 250 messages.
-3. Retrieve a body only with both the numeric Mail ID and RFC Message-ID
-   returned by the same recent listing.
+3. Retrieve bodies only from identities returned by the same recent listing.
+   `get-batch` corroborates all six selection fields before reading any body.
 4. Treat numeric IDs as short-lived locators; the tool corroborates durable
    identity before use.
 5. Use `probe-copy` to exercise a Gmail transfer's copy preflight and selector

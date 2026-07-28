@@ -18,9 +18,11 @@ MUTATION_SCRIPTS = (
 )
 BATCH_SCRIPTS = MUTATION_SCRIPTS[:3] + (
     APPLESCRIPTS / "verify_messages.applescript",
+    APPLESCRIPTS / "get_messages.applescript",
 )
 INDEXED_MESSAGE_SCRIPTS = MUTATION_SCRIPTS[:3] + (
     APPLESCRIPTS / "get_message.applescript",
+    APPLESCRIPTS / "get_messages.applescript",
     APPLESCRIPTS / "verify_messages.applescript",
 )
 
@@ -71,7 +73,7 @@ class AppleMailSafetyTests(unittest.TestCase):
             APPLESCRIPTS / "verify_messages.applescript"
         ).read_text(encoding="utf-8")
         self.assertIn(
-            "duplicate (messages of sourceMailbox whose id is selectorMailID001",
+            "duplicate (messages of sourceMailbox whose id is selectorMailID01",
             copy_source,
         )
         self.assertIn(
@@ -96,17 +98,34 @@ class AppleMailSafetyTests(unittest.TestCase):
             ),
             copy_source.index("duplicate (messages of sourceMailbox"),
         )
-        for source in (copy_source, move_source, verify_source):
-            self.assertNotIn("whose id is in", source)
-            self.assertIn("selectorMailID250", source)
-            self.assertIn(
-                "repeat while (count of selectorMailIDs) < 250", source
-            )
+        self.assertNotIn("whose id is in", copy_source)
+        self.assertIn("selectorMailID10", copy_source)
+        self.assertNotIn("selectorMailID250", copy_source)
+        self.assertIn(
+            "repeat while (count of selectorMailIDs) < 10", copy_source
+        )
+        self.assertIn("selectorMailID250", move_source)
+        self.assertIn(
+            "repeat while (count of selectorMailIDs) < 250", move_source
+        )
+        self.assertNotIn("selectorMailID", verify_source)
+        self.assertNotIn(
+            "repeat while (count of selectorMailIDs)", verify_source
+        )
+        self.assertNotIn("whose id is in", verify_source)
         self.assertIn("SOURCE_BULK_COUNT", verify_source)
+        self.assertLess(
+            copy_source.index("duplicate (messages of sourceMailbox"),
+            copy_source.index(
+                "set finalDestination to my destinationSnapshot"
+            ),
+        )
+        self.assertIn("DESTINATION_IDENTITY", copy_source)
 
     def test_identity_checks_coerce_mail_sender_to_text(self):
         for script in MUTATION_SCRIPTS[:3] + (
             APPLESCRIPTS / "verify_messages.applescript",
+            APPLESCRIPTS / "get_messages.applescript",
         ):
             source = script.read_text(encoding="utf-8")
             self.assertRegex(

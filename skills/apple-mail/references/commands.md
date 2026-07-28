@@ -4,7 +4,7 @@ Set `APPLE_MAIL` to the absolute path of this skill's `scripts/apple-mail`
 entry point.
 
 Commands that access Mail or Gmail require macOS Apple Events or network
-access. Run the first `discover`, `list`, `get`, `verify`, `probe-copy`,
+access. Run the first `discover`, `list`, `get`, `get-batch`, `verify`, `probe-copy`,
 `apply --execute`, or `authorize` attempt with scoped sandbox escalation. Do
 not spend a failed attempt discovering this requirement. Planning, plan
 inspection, and dry runs remain local and can run in the normal workspace
@@ -27,11 +27,18 @@ sandbox.
   --account "person@example.com" --mailbox INBOX \
   --mail-id 123 --message-id "stable@example.com" \
   --body-limit 50000
+
+"$APPLE_MAIL" get-batch \
+  --account "person@example.com" --mailbox INBOX \
+  --selection selection.json \
+  --body-limit 50000
 ```
 
 `get` returns one `MESSAGE` record. Its `BODY` field preserves embedded line
 breaks and Unicode line or paragraph separators without creating extra
-records.
+records. `get-batch` returns one ordered `MESSAGE` record per selected identity,
+accepts at most ten messages, and validates every identity before retrieving
+any body. Do not parallelize singleton `get` calls against Mail.
 
 Each `MESSAGE` row from `list` includes:
 
@@ -125,9 +132,10 @@ positions and mismatched field names; it does not print message content.
 Post-Gmail verification treats Mail error `-1719` from a disappearing indexed
 Inbox lookup as zero source matches; every other Mail error still propagates.
 `probe-copy` is valid only for a Gmail Inbox-to-local plan. It executes the
-copy AppleScript's source/destination resolution, identity, candidate, padding,
-and selector-count path, returns aggregate counts, and exits before
-`duplicate`.
+copy AppleScript's source/destination resolution, identity, candidate, and
+selector-count path, reports copied/reused aggregate counts, and exits before
+`duplicate`. Gmail transfer plans are intentionally capped at ten messages per
+transaction.
 
 ## OAuth
 

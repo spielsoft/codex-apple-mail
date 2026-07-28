@@ -65,6 +65,8 @@ def probe_account_to_local_copy(
     validate_plan(plan)
     if plan["action"] != "gmail_inbox_to_local":
         raise OperationError("Plan is not a Gmail Inbox-to-local transfer")
+    if len(plan["messages"]) > 10:
+        raise OperationError("Gmail transfer batch size cannot exceed 10 messages")
     arguments = [
         "probe",
         plan["source"]["account"],
@@ -164,6 +166,31 @@ def _destinations_are_valid(
         ):
             return False
     return True
+
+
+def _copy_barrier_is_valid(
+    rows: Sequence[Dict[str, str]],
+    messages: Sequence[Dict[str, Any]],
+) -> bool:
+    if len(rows) != len(messages):
+        return False
+    expected = {str(item["mail_id"]): item for item in messages}
+    seen = set()
+    for row in rows:
+        mail_id = row.get("MAIL_ID", "")
+        message = expected.get(mail_id)
+        if message is None or mail_id in seen:
+            return False
+        seen.add(mail_id)
+        if row.get("STATUS") not in ("COPIED", "REUSED"):
+            return False
+        if row.get("DESTINATION_COUNT") != "1":
+            return False
+        if row.get("DESTINATION_IDENTITY") != "true":
+            return False
+        if row.get("DESTINATION_READ") != _bool_text(bool(message["read"])):
+            return False
+    return len(seen) == len(messages)
 
 
 def _append_audit(path: Optional[Path], event: Dict[str, Any]) -> None:
@@ -321,6 +348,8 @@ def apply_gmail_inbox_to_local(
     require_allowed_destination(plan, allowed_destinations)
     if plan["action"] != "gmail_inbox_to_local":
         raise OperationError("Plan is not a Gmail Inbox-to-local transfer")
+    if len(plan["messages"]) > 10:
+        raise OperationError("Gmail transfer batch size cannot exceed 10 messages")
     profile = client.profile()
     if str(profile.get("emailAddress", "")).casefold() != expected_account.casefold():
         raise OperationError("Authenticated Gmail profile does not match the plan")
@@ -358,9 +387,8 @@ def apply_gmail_inbox_to_local(
         plan["destination"]["path"],
     ]
     arguments.extend(_message_arguments(plan["messages"]))
-    runner.run_tsv("copy_account_to_local.applescript", arguments)
-    copied = verify_messages(runner, plan)
-    if not _destinations_are_valid(copied, plan["messages"], required=True):
+    copied = runner.run_tsv("copy_account_to_local.applescript", arguments)
+    if not _copy_barrier_is_valid(copied, plan["messages"]):
         result = {
             "status": "pending_local_copy",
             "action": plan["action"],

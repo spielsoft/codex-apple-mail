@@ -29,6 +29,11 @@ scripts/apple-mail get \
   --account "person@example.com" --mailbox INBOX \
   --mail-id 123 --message-id "stable@example.com" \
   --body-limit 50000
+
+scripts/apple-mail get-batch \
+  --account "person@example.com" --mailbox INBOX \
+  --selection local-artifacts/selection.json \
+  --body-limit 50000
 ```
 
 `list` returns Mail order and never retrieves bodies. Message rows retain the
@@ -38,7 +43,9 @@ derived `FLAG_COLOR`: `-1` is `none`, and indices `0` through `6` are `red`,
 reported as `unknown` without discarding the raw value. Listing does not change
 flags. `get` binds by indexed numeric ID, corroborates RFC Message-ID, and
 bounds body output to 100,000 characters. Embedded body line breaks and Unicode
-line or paragraph separators remain inside one `MESSAGE` record.
+line or paragraph separators remain inside one `MESSAGE` record. `get-batch`
+validates up to ten selected identities in one Mail process before retrieving
+their bodies; use it instead of concurrent singleton reads.
 
 ## Selection format
 
@@ -109,8 +116,9 @@ scripts/apple-mail probe-copy --plan local-artifacts/transfer-plan.json
 ```
 
 `probe-copy` is a read-only diagnostic for Gmail transfer plans. It exercises
-the copy script's resolution, identity, candidate, padding, and selector-count
-path, then exits before `duplicate`.
+the copy script's resolution, identity, candidate, and selector-count path,
+reports missing and reused copies, then exits before `duplicate`. Gmail
+transfer transactions are capped at ten messages.
 
 `apply` is a dry run unless `--execute` is present. Execution requires an audit
 path. Destination-bearing plans require an exact allowlist on both dry run and

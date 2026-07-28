@@ -56,6 +56,18 @@ def verification(source_count="1", source_read="false", destination_count="0"):
     ]
 
 
+def copy_barrier(destination_count="1", identity="true"):
+    return [
+        {
+            "MAIL_ID": "123",
+            "STATUS": "COPIED",
+            "DESTINATION_COUNT": destination_count,
+            "DESTINATION_READ": "false" if destination_count == "1" else "",
+            "DESTINATION_IDENTITY": identity,
+        }
+    ]
+
+
 class SequencedRunner:
     def __init__(self, verifications=None, script_results=None):
         self.verifications = list(verifications or [])
@@ -150,7 +162,8 @@ class AppleMailOperationTests(unittest.TestCase):
                         "MODE": "probe",
                         "ITEM_COUNT": "1",
                         "COPY_COUNT": "1",
-                        "PADDED_COUNT": "250",
+                        "REUSED_COUNT": "0",
+                        "MISSING_COPY_COUNT": "1",
                         "SOURCE_SELECTOR_COUNT": "1",
                         "READY": "true",
                     }
@@ -289,9 +302,11 @@ class AppleMailOperationTests(unittest.TestCase):
         runner = SequencedRunner(
             [
                 verification(),
-                verification(destination_count="1"),
                 verification(source_count="0", destination_count="1"),
-            ]
+            ],
+            script_results={
+                "copy_account_to_local.applescript": copy_barrier()
+            },
         )
         client = FakeGmailClient()
         result = apply_gmail_inbox_to_local(
@@ -323,7 +338,14 @@ class AppleMailOperationTests(unittest.TestCase):
             [MESSAGE],
             destination=local_destination("On My Mac/Review"),
         )
-        runner = SequencedRunner([verification(), verification()])
+        runner = SequencedRunner(
+            [verification()],
+            script_results={
+                "copy_account_to_local.applescript": copy_barrier(
+                    destination_count="0", identity="false"
+                )
+            },
+        )
         client = FakeGmailClient()
         result = apply_gmail_inbox_to_local(
             runner,
@@ -345,7 +367,10 @@ class AppleMailOperationTests(unittest.TestCase):
         reused = verification(source_count="1", destination_count="1")
         reused[0]["SOURCE_IDENTITY"] = "false"
         runner = SequencedRunner(
-            [verification(), verification(destination_count="1"), reused]
+            [verification(), reused],
+            script_results={
+                "copy_account_to_local.applescript": copy_barrier()
+            },
         )
         with self.assertRaises(OperationError):
             apply_gmail_inbox_to_local(
