@@ -13,6 +13,7 @@ from .operations import (
     apply_gmail_inbox_to_local,
     apply_local_move,
     apply_set_read,
+    probe_account_to_local_copy,
     verify_messages,
 )
 from .plans import (
@@ -143,6 +144,16 @@ def command_verify(args: argparse.Namespace) -> None:
     plan = read_json(args.plan)
     validate_plan(plan)
     _print_json(verify_messages(MailRunner(APPLESCRIPT_DIR, args.timeout), plan))
+
+
+def command_probe_copy(args: argparse.Namespace) -> None:
+    plan = read_json(args.plan)
+    validate_plan(plan)
+    _print_json(
+        probe_account_to_local_copy(
+            MailRunner(APPLESCRIPT_DIR, args.timeout), plan
+        )
+    )
 
 
 def command_apply(args: argparse.Namespace) -> None:
@@ -278,6 +289,10 @@ def build_parser() -> argparse.ArgumentParser:
     verify = subparsers.add_parser("verify")
     verify.add_argument("--plan", type=Path, required=True)
     verify.set_defaults(handler=command_verify)
+
+    probe_copy = subparsers.add_parser("probe-copy")
+    probe_copy.add_argument("--plan", type=Path, required=True)
+    probe_copy.set_defaults(handler=command_probe_copy)
 
     apply_parser = subparsers.add_parser("apply")
     apply_parser.add_argument("--plan", type=Path, required=True)

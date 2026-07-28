@@ -14,6 +14,7 @@ from apple_mail.operations import (
     apply_gmail_inbox_to_local,
     apply_local_move,
     apply_set_read,
+    probe_account_to_local_copy,
     verify_messages,
 )
 from apple_mail.plans import (
@@ -134,6 +135,37 @@ class AppleMailOperationTests(unittest.TestCase):
             )
             self.assertEqual(arguments[group_start + 2], message["subject"])
             self.assertEqual(arguments[group_start + 5], "false")
+
+    def test_copy_probe_uses_exact_copy_script_without_apply_mode(self):
+        plan = build_message_plan(
+            "gmail_inbox_to_local",
+            account_source("person@example.com"),
+            [MESSAGE],
+            destination=local_destination("On My Mac/Review"),
+        )
+        runner = SequencedRunner(
+            script_results={
+                "copy_account_to_local.applescript": [
+                    {
+                        "MODE": "probe",
+                        "ITEM_COUNT": "1",
+                        "COPY_COUNT": "1",
+                        "PADDED_COUNT": "250",
+                        "SOURCE_SELECTOR_COUNT": "1",
+                        "READY": "true",
+                    }
+                ]
+            }
+        )
+
+        result = probe_account_to_local_copy(runner, plan)
+
+        self.assertEqual(result["READY"], "true")
+        script, arguments = runner.calls[0]
+        self.assertEqual(script, "copy_account_to_local.applescript")
+        self.assertEqual(arguments[0], "probe")
+        self.assertEqual(len(arguments), 4 + 6)
+        self.assertEqual(arguments[4], str(MESSAGE["mail_id"]))
 
     def test_stale_or_mismatched_numeric_id_stops_before_mutation(self):
         plan = build_message_plan(
@@ -277,6 +309,12 @@ class AppleMailOperationTests(unittest.TestCase):
             ),
             1,
         )
+        copy_call = next(
+            call
+            for call in runner.calls
+            if call[0] == "copy_account_to_local.applescript"
+        )
+        self.assertEqual(copy_call[1][0], "apply")
 
     def test_partial_copy_returns_pending_without_gmail_change(self):
         plan = build_message_plan(

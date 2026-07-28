@@ -59,6 +59,25 @@ def verify_messages(
     return runner.run_tsv("verify_messages.applescript", arguments)
 
 
+def probe_account_to_local_copy(
+    runner: MailRunner, plan: Dict[str, Any]
+) -> Dict[str, str]:
+    validate_plan(plan)
+    if plan["action"] != "gmail_inbox_to_local":
+        raise OperationError("Plan is not a Gmail Inbox-to-local transfer")
+    arguments = [
+        "probe",
+        plan["source"]["account"],
+        plan["source"]["mailbox"],
+        plan["destination"]["path"],
+    ]
+    arguments.extend(_message_arguments(plan["messages"]))
+    rows = runner.run_tsv("copy_account_to_local.applescript", arguments)
+    if len(rows) != 1 or rows[0].get("MODE") != "probe":
+        raise OperationError("Copy preflight probe returned an unexpected result")
+    return rows[0]
+
+
 def _source_mismatches(
     rows: Sequence[Dict[str, str]], messages: Sequence[Dict[str, Any]]
 ) -> List[str]:
@@ -333,6 +352,7 @@ def apply_gmail_inbox_to_local(
         },
     )
     arguments = [
+        "apply",
         plan["source"]["account"],
         plan["source"]["mailbox"],
         plan["destination"]["path"],

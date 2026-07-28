@@ -7,9 +7,10 @@
 Mail automation uses macOS Apple Events, which are outside Codex's default
 command sandbox. A task that invokes this plugin authorizes Codex to request
 the required scoped escalation on the first Mail-accessing command rather than
-probing in the sandbox first. Codex's active approval policy still decides
-whether that escalation is auto-reviewed or shown to the user. Planning,
-inspection, and dry runs do not need Apple Events access.
+probing in the sandbox first. This includes the read-only `probe-copy`
+diagnostic. Codex's active approval policy still decides whether that
+escalation is auto-reviewed or shown to the user. Planning, inspection, and
+dry runs do not need Apple Events access.
 
 ## Capabilities
 
@@ -103,7 +104,13 @@ scripts/apple-mail apply \
   --execute
 
 scripts/apple-mail verify --plan local-artifacts/transfer-plan.json
+
+scripts/apple-mail probe-copy --plan local-artifacts/transfer-plan.json
 ```
+
+`probe-copy` is a read-only diagnostic for Gmail transfer plans. It exercises
+the copy script's resolution, identity, candidate, padding, and selector-count
+path, then exits before `duplicate`.
 
 `apply` is a dry run unless `--execute` is present. Execution requires an audit
 path. Destination-bearing plans require an exact allowlist on both dry run and

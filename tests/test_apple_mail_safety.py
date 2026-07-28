@@ -55,6 +55,22 @@ class AppleMailSafetyTests(unittest.TestCase):
         )
         self.assertNotIn("duplicate messagesToCopy", copy_source)
         self.assertNotIn("move messagesToMove", move_source)
+        self.assertIn(
+            "set copyCount to count of mailIDsToCopy", copy_source
+        )
+        self.assertIn(
+            "if bulkSourceCount is not copyCount then error", copy_source
+        )
+        self.assertLess(
+            copy_source.index("set copyCount to count of mailIDsToCopy"),
+            copy_source.index("set selectorMailIDs to {} & mailIDsToCopy"),
+        )
+        self.assertLess(
+            copy_source.index(
+                'if operationMode is "probe" then return my probeResult'
+            ),
+            copy_source.index("duplicate (messages of sourceMailbox"),
+        )
         for source in (copy_source, move_source, verify_source):
             self.assertNotIn("whose id is in", source)
             self.assertIn("selectorMailID250", source)

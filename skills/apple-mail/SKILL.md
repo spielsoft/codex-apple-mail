@@ -11,8 +11,8 @@ control Mail's UI or issue ad hoc AppleScript.
 ## Execution permission
 
 Apple Mail access uses macOS Apple Events, which the default command sandbox
-blocks. For `discover`, `list`, `get`, `verify`, `apply --execute`, and
-`authorize`, make the first shell-tool call with
+blocks. For `discover`, `list`, `get`, `verify`, `probe-copy`,
+`apply --execute`, and `authorize`, make the first shell-tool call with
 `sandbox_permissions: "require_escalated"` (or the surface's equivalent scoped
 permission) and a concise Apple Mail justification. Do not try the command in
 the sandbox first. Invocation of this skill authorizes requesting that scoped
@@ -41,10 +41,12 @@ selection schema.
    returned by the same recent listing.
 4. Treat numeric IDs as short-lived locators; the tool corroborates durable
    identity before use.
-5. Never change Mail without a hashed plan and explicit `--execute`.
-6. Supply every destination again through exact `--allow-destination`.
-7. Require an append-only audit path for execution.
-8. If a result is pending synchronization, verify later; do not repeat the
+5. Use `probe-copy` to exercise a Gmail transfer's copy preflight and selector
+   path without calling Mail's `duplicate` command.
+6. Never change Mail without a hashed plan and explicit `--execute`.
+7. Supply every destination again through exact `--allow-destination`.
+8. Require an append-only audit path for execution.
+9. If a result is pending synchronization, verify later; do not repeat the
    mutation or poll continuously.
 
 The tool supplies mechanics only. Apply the user's separate filing or

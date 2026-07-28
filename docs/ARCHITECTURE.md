@@ -36,8 +36,10 @@ Every message plan carries:
 A batch binds by numeric ID, validates all corroborators, then submits one
 numeric-ID-filtered Mail object specifier to the bulk `duplicate` or `move`
 command. A materialized AppleScript list is not a Mail object specifier and
-must not be used as the command's direct parameter. The implementation never
-scans a large source once per RFC Message-ID.
+must not be used as the command's direct parameter. Capture the candidate
+count before padding a selector list: AppleScript list concatenation can retain
+shared mutable backing. The implementation never scans a large source once per
+RFC Message-ID.
 
 ## Plan actions
 
