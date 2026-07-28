@@ -69,6 +69,31 @@ class AppleMailCliTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "cannot exceed 10"):
                 command_get_batch(self._args(selection))
 
+    def test_get_batch_uses_oauth_backend_without_calling_mail(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            selection = Path(temporary) / "selection.json"
+            selection.write_text(json.dumps([message(1)]), encoding="utf-8")
+            args = self._args(selection)
+            args.token = Path(temporary) / "token.json"
+            args.expected_account = "person@example.com"
+            with (
+                patch("apple_mail.cli.MailRunner") as runner_class,
+                patch("apple_mail.cli.GmailClient") as client_class,
+                patch(
+                    "apple_mail.cli.get_message_records_parallel",
+                    return_value=[{"TYPE": "MESSAGE"}],
+                ) as get_records,
+                patch("apple_mail.cli._print_json"),
+            ):
+                client_class.return_value.profile.return_value = {
+                    "emailAddress": "person@example.com"
+                }
+                command_get_batch(args)
+
+            runner_class.assert_not_called()
+            get_records.assert_called_once()
+            self.assertEqual(get_records.call_args.kwargs["body_limit"], 50000)
+
 
 if __name__ == "__main__":
     unittest.main()

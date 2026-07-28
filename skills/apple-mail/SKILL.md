@@ -22,7 +22,9 @@ permission immediately; it does not override the active Codex approval policy.
 
 - For discovery, listing including flag labels, or reading: run a bounded
   read-only command. Prefer one `get-batch` call over concurrent singleton
-  `get` calls when reading two to ten messages from one mailbox.
+  `get` calls when reading two to ten messages from one mailbox. For Gmail
+  Inbox and an existing OAuth token, pass `--token` and `--expected-account`
+  to use the faster Gmail API backend; otherwise the command uses Mail.
 - For a change: list exact messages, create a hashed plan, inspect it, dry-run
   it, then apply only when the user has authorized that scope.
 - For Gmail Inbox to local: use `plan-gmail-transfer`; never substitute a Mail
@@ -40,6 +42,8 @@ selection schema.
 2. Limit metadata listings to at most 250 messages.
 3. Retrieve bodies only from identities returned by the same recent listing.
    `get-batch` corroborates all six selection fields before reading any body.
+   Its OAuth backend completes the entire metadata barrier before fetching
+   any selected body.
 4. Treat numeric IDs as short-lived locators; the tool corroborates durable
    identity before use.
 5. Use `probe-copy` to exercise a Gmail transfer's copy preflight and selector

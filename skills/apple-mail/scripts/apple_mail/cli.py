@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
-from .gmail import GmailClient
+from .gmail import GmailClient, get_message_records_parallel
 from .mail import MailRunner
 from .oauth import TokenStore, authorize_desktop
 from .operations import (
@@ -111,6 +111,34 @@ def command_get_batch(args: argparse.Namespace) -> None:
     messages = plan["messages"]
     if len(messages) > 10:
         raise ValueError("Body batch size cannot exceed 10 messages")
+    token = getattr(args, "token", None)
+    if token is not None:
+        expected_account = getattr(args, "expected_account", None)
+        if (
+            source["kind"] != "account"
+            or source["mailbox"] != "INBOX"
+            or not expected_account
+        ):
+            raise ValueError(
+                "OAuth-backed get-batch requires account-qualified INBOX "
+                "and --expected-account"
+            )
+        if source["account"].casefold() != expected_account.casefold():
+            raise ValueError("Mail account does not match --expected-account")
+        client = GmailClient(TokenStore(token))
+        profile = client.profile()
+        if str(profile.get("emailAddress", "")).casefold() != (
+            expected_account.casefold()
+        ):
+            raise ValueError("Authenticated Gmail profile does not match the account")
+        _print_json(
+            get_message_records_parallel(
+                client,
+                messages,
+                body_limit=args.body_limit,
+            )
+        )
+        return
     arguments = _source_script_arguments(source) + [str(args.body_limit)]
     for message in messages:
         arguments.extend(
@@ -293,6 +321,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_source_arguments(get_batch)
     get_batch.add_argument("--selection", type=Path, required=True)
     get_batch.add_argument("--body-limit", type=int, default=50000)
+    get_batch.add_argument("--token", type=Path)
+    get_batch.add_argument("--expected-account")
     get_batch.set_defaults(handler=command_get_batch)
 
     transfer = subparsers.add_parser("plan-gmail-transfer")

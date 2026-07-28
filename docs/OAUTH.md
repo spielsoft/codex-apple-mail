@@ -4,11 +4,14 @@
 
 Gmail authorization is optional. Apple Mail discovery, listing, reading, local
 mailbox creation, local moves, and read-state changes do not need Google
-credentials. Only Gmail Inbox-to-local transfers use this flow.
+credentials. Gmail Inbox-to-local transfers use this flow. A Gmail Inbox
+`get-batch` can also use the same token as an optional faster read backend.
 
-The Gmail API is used only for message lookup and adding or removing `INBOX`
-after a local copy is verified. The desktop OAuth flow prints a URL and waits
-on localhost; it does not control a browser.
+The Gmail API is used only for bounded message lookup/body retrieval and adding
+or removing `INBOX` after a local copy is verified. `gmail.modify` already
+includes the read access needed by the optional batch-read path, so it does
+not request another scope. The desktop OAuth flow prints a URL and waits on
+localhost; it does not control a browser.
 
 ## Setup
 
@@ -41,6 +44,20 @@ Keep the token path private and do not commit either input or output file.
 
 Every Gmail transfer compares the authenticated profile, expected account
 argument, and account embedded in the hashed plan.
+
+For an already-authorized account, the read-only fast path is:
+
+```sh
+scripts/apple-mail get-batch \
+  --account "person@example.com" --mailbox INBOX \
+  --selection /private/path/selection.json \
+  --body-limit 50000 \
+  --token /private/path/gmail-token.json \
+  --expected-account "person@example.com"
+```
+
+It performs a complete bounded metadata and read-state corroboration before
+retrieving any body. It does not change labels, read state, or Mail.
 
 Never store credentials or tokens in this plugin repository.
 

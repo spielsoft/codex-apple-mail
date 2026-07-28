@@ -34,6 +34,13 @@ scripts/apple-mail get-batch \
   --account "person@example.com" --mailbox INBOX \
   --selection local-artifacts/selection.json \
   --body-limit 50000
+
+scripts/apple-mail get-batch \
+  --account "person@example.com" --mailbox INBOX \
+  --selection local-artifacts/selection.json \
+  --body-limit 50000 \
+  --token local-artifacts/gmail-token.json \
+  --expected-account "person@example.com"
 ```
 
 `list` returns Mail order and never retrieves bodies. Message rows retain the
@@ -45,7 +52,10 @@ flags. `get` binds by indexed numeric ID, corroborates RFC Message-ID, and
 bounds body output to 100,000 characters. Embedded body line breaks and Unicode
 line or paragraph separators remain inside one `MESSAGE` record. `get-batch`
 validates up to ten selected identities in one Mail process before retrieving
-their bodies; use it instead of concurrent singleton reads.
+their bodies; use it instead of concurrent singleton reads. When a Gmail token
+and expected account are supplied, it instead uses bounded concurrent Gmail
+API calls, with a complete metadata/read-state barrier before any full body is
+fetched.
 
 ## Selection format
 
@@ -124,6 +134,11 @@ During execution, the copy script rechecks destination visibility on a fixed,
 bounded schedule for at most 6.3 seconds after `duplicate`. It reports
 `pending_local_copy` without changing Gmail when Mail still has not exposed
 every exact copy.
+
+Execution reports `phase_seconds` for Gmail profile lookup, Gmail preflight,
+Mail preflight, local copy, Gmail label removal, Mail synchronization, final
+verification, and total transaction time. These timings contain no message
+content.
 
 During Mail synchronization, an indexed read can transiently fail with Mail
 error `-10000`. Verification retries only that exact read after 0.1, 0.2, 0.4,

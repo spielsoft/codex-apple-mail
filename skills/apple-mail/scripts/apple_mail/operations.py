@@ -1,12 +1,14 @@
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from .gmail import (
     GmailClient,
     GmailError,
-    resolve_unique_message,
+    resolve_messages_parallel,
     validate_archived_labels,
 )
 from .mail import MailRunner
@@ -227,6 +229,55 @@ def append_audit_event(path: Path, event: Dict[str, Any]) -> None:
     _append_audit(path, event)
 
 
+def _elapsed(started_at: float) -> float:
+    return round(perf_counter() - started_at, 3)
+
+
+def _remove_inbox_labels_parallel(
+    client: GmailClient,
+    gmail_messages: Sequence[Dict[str, Any]],
+) -> List[str]:
+    gmail_ids = [str(message["id"]) for message in gmail_messages]
+    if len(set(gmail_ids)) != len(gmail_ids):
+        raise OperationError("Gmail resolution returned a duplicate message")
+    changed: Dict[str, Dict[str, Any]] = {}
+    errors: List[Exception] = []
+    with ThreadPoolExecutor(max_workers=len(gmail_ids)) as executor:
+        futures = {
+            executor.submit(
+                client.modify_inbox_label,
+                gmail_id,
+                remove=True,
+            ): gmail_id
+            for gmail_id in gmail_ids
+        }
+        for future in as_completed(futures):
+            gmail_id = futures[future]
+            try:
+                response = future.result()
+                changed[gmail_id] = response
+                validate_archived_labels(response)
+            except Exception as error:
+                errors.append(error)
+    if errors:
+        rollback_errors = []
+        for gmail_id in reversed(gmail_ids):
+            if gmail_id not in changed:
+                continue
+            try:
+                client.modify_inbox_label(gmail_id, add=True)
+            except GmailError as error:
+                rollback_errors.append(str(error))
+        if rollback_errors:
+            raise OperationError(
+                "Gmail mutation failed and rollback was incomplete: {}".format(
+                    "; ".join(rollback_errors)
+                )
+            )
+        raise errors[0]
+    return gmail_ids
+
+
 def apply_local_move(
     runner: MailRunner,
     plan: Dict[str, Any],
@@ -365,26 +416,32 @@ def apply_gmail_inbox_to_local(
     allowed_destinations: Iterable[str],
     audit_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
+    transaction_started = perf_counter()
+    phase_seconds: Dict[str, float] = {}
     require_allowed_destination(plan, allowed_destinations)
     if plan["action"] != "gmail_inbox_to_local":
         raise OperationError("Plan is not a Gmail Inbox-to-local transfer")
     if len(plan["messages"]) > 10:
         raise OperationError("Gmail transfer batch size cannot exceed 10 messages")
+    phase_started = perf_counter()
     profile = client.profile()
+    phase_seconds["gmail_profile"] = _elapsed(phase_started)
     if str(profile.get("emailAddress", "")).casefold() != expected_account.casefold():
         raise OperationError("Authenticated Gmail profile does not match the plan")
     if plan["source"]["account"].casefold() != expected_account.casefold():
         raise OperationError("Plan account does not match the expected Gmail account")
 
-    gmail_messages = []
-    for message in plan["messages"]:
-        gmail_message = resolve_unique_message(client, message)
+    phase_started = perf_counter()
+    gmail_messages = resolve_messages_parallel(client, plan["messages"])
+    phase_seconds["gmail_preflight"] = _elapsed(phase_started)
+    for gmail_message in gmail_messages:
         labels = set(gmail_message.get("labelIds", []))
         if "INBOX" not in labels or "TRASH" in labels:
             raise OperationError("Gmail source labels do not match the required pre-state")
-        gmail_messages.append(gmail_message)
 
+    phase_started = perf_counter()
     before = verify_messages(runner, plan)
+    phase_seconds["mail_preflight"] = _elapsed(phase_started)
     _require_valid_sources(
         before, plan["messages"], "Mail source preflight failed"
     )
@@ -407,41 +464,32 @@ def apply_gmail_inbox_to_local(
         plan["destination"]["path"],
     ]
     arguments.extend(_message_arguments(plan["messages"]))
+    phase_started = perf_counter()
     copied = runner.run_tsv("copy_account_to_local.applescript", arguments)
+    phase_seconds["local_copy"] = _elapsed(phase_started)
     copy_summary = _copy_barrier_summary(copied)
     if not _copy_barrier_is_valid(copied, plan["messages"]):
+        phase_seconds["transaction_total"] = _elapsed(transaction_started)
         result = {
             "status": "pending_local_copy",
             "action": plan["action"],
             "plan_hash": plan["plan_hash"],
             **copy_summary,
+            "phase_seconds": phase_seconds,
         }
         _append_audit(audit_path, result)
         return result
 
-    changed_ids: List[str] = []
-    try:
-        for gmail_message in gmail_messages:
-            changed = client.modify_inbox_label(gmail_message["id"], remove=True)
-            validate_archived_labels(changed)
-            changed_ids.append(gmail_message["id"])
-    except Exception:
-        rollback_errors = []
-        for gmail_id in reversed(changed_ids):
-            try:
-                client.modify_inbox_label(gmail_id, add=True)
-            except GmailError as error:
-                rollback_errors.append(str(error))
-        if rollback_errors:
-            raise OperationError(
-                "Gmail mutation failed and rollback was incomplete: {}".format(
-                    "; ".join(rollback_errors)
-                )
-            )
-        raise
+    phase_started = perf_counter()
+    changed_ids = _remove_inbox_labels_parallel(client, gmail_messages)
+    phase_seconds["gmail_label_removal"] = _elapsed(phase_started)
 
+    phase_started = perf_counter()
     runner.run_raw("synchronize_account.applescript", [plan["source"]["account"]])
+    phase_seconds["mail_synchronize"] = _elapsed(phase_started)
+    phase_started = perf_counter()
     final = verify_messages(runner, plan)
+    phase_seconds["final_verify"] = _elapsed(phase_started)
     if not _destinations_are_valid(final, plan["messages"], required=True):
         raise OperationError("Final local destination verification failed")
     if any(
@@ -450,6 +498,7 @@ def apply_gmail_inbox_to_local(
     ):
         raise OperationError("A numeric source ID was reused by another message")
     source_pending = any(row["SOURCE_ID_COUNT"] == "1" for row in final)
+    phase_seconds["transaction_total"] = _elapsed(transaction_started)
     result = {
         "status": "pending_mail_sync" if source_pending else "complete",
         "action": plan["action"],
@@ -457,6 +506,7 @@ def apply_gmail_inbox_to_local(
         "message_count": len(plan["messages"]),
         "gmail_inbox_labels_removed": len(changed_ids),
         **copy_summary,
+        "phase_seconds": phase_seconds,
     }
     _append_audit(audit_path, result)
     return result

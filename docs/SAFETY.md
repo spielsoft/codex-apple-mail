@@ -67,10 +67,11 @@ approved generic transaction is:
 5. add `INBOX` back if a later Gmail mutation in the batch fails;
 6. request one Mail synchronization and perform one indexed final check.
 
-The Gmail request layer allows only profile lookup, message search, message
-metadata lookup, and a single-message modification whose sole changed label is
-`INBOX`. It rejects other labels, batch mutation, unsafe methods, and unsafe
-endpoints.
+The Gmail request layer allows only profile lookup, message search, bounded
+metadata/full-message reads, and a single-message modification whose sole
+changed label is `INBOX`. Gmail requests may run concurrently only within the
+ten-message transfer/read limit. It rejects other labels, server-side batch
+mutation, unsafe methods, and unsafe endpoints.
 
 The Gmail API response is authoritative server confirmation. If Mail still
 shows a corroborated source message after synchronization, return
@@ -84,6 +85,8 @@ different metadata, fail closed.
 - Use account-qualified mailboxes, not Mail's global unified Inbox.
 - `get` requires both numeric and RFC IDs and bounds body output to 100,000
   characters.
+- OAuth-backed `get-batch` must validate all selected metadata and read states
+  before issuing any full-message body request.
 - Do not retrieve attachment contents.
 
 ## OAuth and sensitive artifacts

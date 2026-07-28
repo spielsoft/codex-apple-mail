@@ -32,13 +32,25 @@ sandbox.
   --account "person@example.com" --mailbox INBOX \
   --selection selection.json \
   --body-limit 50000
+
+"$APPLE_MAIL" get-batch \
+  --account "person@example.com" --mailbox INBOX \
+  --selection selection.json \
+  --body-limit 50000 \
+  --token /private/path/gmail-token.json \
+  --expected-account "person@example.com"
 ```
 
 `get` returns one `MESSAGE` record. Its `BODY` field preserves embedded line
 breaks and Unicode line or paragraph separators without creating extra
 records. `get-batch` returns one ordered `MESSAGE` record per selected identity,
 accepts at most ten messages, and validates every identity before retrieving
-any body. Do not parallelize singleton `get` calls against Mail.
+any body. Without OAuth arguments it uses one serial AppleScript process. With
+both OAuth arguments it verifies the authenticated profile, resolves the ten
+Gmail identities concurrently, completes the metadata/read-state barrier, and
+then retrieves the bodies concurrently. It emits the same record schema and
+does not change Gmail or Mail. Do not parallelize singleton `get` calls against
+Mail.
 
 Each `MESSAGE` row from `list` includes:
 
@@ -126,6 +138,10 @@ Use a list or an object containing `messages`, `items`, or `records`:
 
 Read-state plans omit `--allow-destination`. All execution requires `--audit`.
 Gmail execution additionally requires `--token` and `--expected-account`.
+Read-only Gmail resolution and per-message `INBOX` label changes are bounded
+to ten and use concurrent network requests. Label removal still requires one
+confirmed response per message; if any request fails, every confirmed change
+is rolled back before the command reports failure.
 Verification reports separate source match Booleans for Message-ID, subject,
 sender, and received time. A failed mutation preflight names only the plan item
 positions and mismatched field names; it does not print message content.
@@ -149,3 +165,6 @@ continuously.
   --client-secrets gmail-client-credentials.json \
   --token gmail-token.json
 ```
+
+The same token can be supplied to the read-only `get-batch` fast path. No
+additional scope or authorization grant is required.

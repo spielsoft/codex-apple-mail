@@ -12,6 +12,10 @@ Never perform one large-mailbox RFC Message-ID scan per message. Numeric IDs
 are fast but non-durable, so a numeric hit without complete corroboration must
 fail closed.
 
+Mail Apple Events must remain serial. Independent Gmail API requests may run
+concurrently within the fixed ten-message bound. The client resolves its OAuth
+access token once per process so concurrent reads never race token refresh.
+
 ## Transaction shape
 
 For Gmail Inbox-to-local:
@@ -25,7 +29,9 @@ For Gmail Inbox-to-local:
    asynchronously, retry that snapshot on the fixed delays 0.1, 0.2, 0.4,
    0.8, 1.6, and 3.2 seconds. Treat the final result as the local-copy barrier;
    never poll beyond this bounded schedule.
-5. Remove only Gmail `INBOX` with per-message responses and rollback.
+5. Remove only Gmail `INBOX` with bounded concurrent per-message responses.
+   Wait for every response; on any failure, roll back every confirmed change
+   before returning the error.
 6. Request one Mail synchronization.
 7. Perform one final indexed source check.
 
@@ -38,6 +44,12 @@ The Mail work should scale with batch size plus one destination Message-ID
 snapshot, not batch size multiplied by source-mailbox size. General metadata
 and local operations are capped at 250; Gmail transfers and batch body reads
 are capped at ten.
+
+For Gmail Inbox body retrieval, `get-batch --token --expected-account` performs
+two concurrent phases: first resolve and corroborate every selected identity
+and read state, then fetch full bodies. The phase boundary prevents a bad
+selection from causing any body retrieval. The serial AppleScript backend
+remains available when no token is supplied.
 
 ## Live validation gate
 

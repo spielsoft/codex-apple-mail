@@ -21,7 +21,8 @@ The plugin contains no filing policy or user-specific state.
 
 Python standard-library code validates plans and orchestrates narrow
 AppleScripts. AppleScript is the public Apple Mail interface. A constrained
-Gmail API client is used only for lookup and adding or removing `INBOX`.
+Gmail API client provides optional bounded Inbox body reads and handles lookup
+plus adding or removing `INBOX` for Gmail transfers.
 
 The tool never reads or writes Mail's private database.
 
@@ -58,7 +59,9 @@ AppleScript cross-store `move` does not reliably remove Gmail's `INBOX` label.
 The transaction validates sources, bulk-copies missing local messages, verifies
 the complete destination, removes only Gmail `INBOX`, requests one Mail
 synchronization, and performs one final indexed check. Partial Gmail mutation
-rolls back by adding `INBOX`.
+rolls back by adding `INBOX`. Gmail lookup and label requests may run
+concurrently within the fixed ten-message bound, but each label change still
+requires its own confirmed response. Mail Apple Events remain serial.
 
 After `INBOX` removal, Mail can raise error `-1719` while an indexed source
 filter is disappearing instead of returning an empty collection. The indexed

@@ -20,6 +20,7 @@ directory name and the manifest `name` synchronized. Use the bundled skill's
 
 Apple Mail discovery, listing, reading, local mailbox creation, local moves,
 and read-state changes do not require Google authentication. Gmail OAuth is
-needed only for a Gmail Inbox-to-local transfer. See [docs/OAUTH.md](docs/OAUTH.md)
-for the optional setup and [docs/PUBLISHING.md](docs/PUBLISHING.md) before
-pushing this repository to GitHub.
+needed for a Gmail Inbox-to-local transfer and can optionally accelerate
+bounded Gmail Inbox body reads. See [docs/OAUTH.md](docs/OAUTH.md) for the
+optional setup and [docs/PUBLISHING.md](docs/PUBLISHING.md) before pushing this
+repository to GitHub.

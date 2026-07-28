@@ -10,6 +10,7 @@ sys.path.insert(
 
 from apple_mail.operations import (
     OperationError,
+    _remove_inbox_labels_parallel,
     apply_create_mailbox,
     apply_gmail_inbox_to_local,
     apply_local_move,
@@ -321,6 +322,9 @@ class AppleMailOperationTests(unittest.TestCase):
         self.assertEqual(result["local_copies_submitted"], 1)
         self.assertEqual(result["local_copies_reused"], 0)
         self.assertEqual(result["local_copy_barrier_attempts"], 2)
+        self.assertIn("gmail_preflight", result["phase_seconds"])
+        self.assertIn("gmail_label_removal", result["phase_seconds"])
+        self.assertIn("transaction_total", result["phase_seconds"])
         self.assertEqual(client.modifications, [("gmail-1", False, True)])
         self.assertEqual(
             [call[0] for call in runner.calls].count(
@@ -385,6 +389,29 @@ class AppleMailOperationTests(unittest.TestCase):
                 expected_account="person@example.com",
                 allowed_destinations=["On My Mac/Review"],
             )
+
+    def test_parallel_gmail_failure_rolls_back_every_confirmed_change(self):
+        class PartialFailureClient:
+            def __init__(self):
+                self.calls = []
+
+            def modify_inbox_label(self, gmail_id, *, add=False, remove=False):
+                self.calls.append((gmail_id, add, remove))
+                if remove and gmail_id == "gmail-2":
+                    raise RuntimeError("bounded failure")
+                return {
+                    "id": gmail_id,
+                    "labelIds": ["INBOX"] if add else ["IMPORTANT"],
+                }
+
+        client = PartialFailureClient()
+        with self.assertRaisesRegex(RuntimeError, "bounded failure"):
+            _remove_inbox_labels_parallel(
+                client,
+                [{"id": "gmail-1"}, {"id": "gmail-2"}, {"id": "gmail-3"}],
+            )
+        self.assertIn(("gmail-1", True, False), client.calls)
+        self.assertIn(("gmail-3", True, False), client.calls)
 
 
 if __name__ == "__main__":
