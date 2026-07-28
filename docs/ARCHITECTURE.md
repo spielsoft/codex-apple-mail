@@ -56,9 +56,12 @@ requires `--execute`; destination-bearing plans also require an exact
 ## Gmail transfer
 
 AppleScript cross-store `move` does not reliably remove Gmail's `INBOX` label.
-The transaction validates sources, bulk-copies missing local messages, verifies
-the complete destination, removes only Gmail `INBOX`, requests one Mail
-synchronization, and performs one final indexed check. Partial Gmail mutation
+The copy script resolves one bounded numeric-ID selector, validates every
+source from that result, bulk-copies missing local messages, and verifies the
+complete destination. The transaction then removes only Gmail `INBOX` and
+requests one Mail synchronization. It returns `pending_mail_sync` rather than
+immediately querying the cache that it just asked to synchronize; one later
+bounded verification gates the next sequential block. Partial Gmail mutation
 rolls back by adding `INBOX`. Gmail lookup and label requests may run
 concurrently within the fixed ten-message bound, but each label change still
 requires its own confirmed response. Mail Apple Events remain serial.
@@ -68,7 +71,8 @@ filter is disappearing instead of returning an empty collection. The indexed
 lookup boundary normalizes only that error to zero matches; other Mail errors
 still propagate. Pre-mutation callers continue to reject zero matches.
 
-Display lag returns `pending_mail_sync`; the tool does not poll continuously.
+Display lag returns `pending_mail_sync`; the tool neither polls continuously
+nor performs a predictably premature immediate cache check.
 
 ## Layout
 

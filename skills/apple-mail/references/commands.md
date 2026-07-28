@@ -151,12 +151,17 @@ Mail error `-10000` is retried only for the same indexed read on the bounded
 0.1, 0.2, 0.4, and 0.8 second schedule. A persistent failure remains an error
 and is never interpreted as source absence.
 `probe-copy` is valid only for a Gmail Inbox-to-local plan. It executes the
-copy AppleScript's source/destination resolution, identity, candidate, and
-selector-count path, reports copied/reused aggregate counts, and exits before
-`duplicate`. Gmail transfer plans are intentionally capped at ten messages per
-transaction. Execution waits on a fixed, bounded destination-visibility
-schedule for at most 6.3 seconds after `duplicate`; it never polls
-continuously.
+copy AppleScript's one bounded source-selector resolution, in-memory identity
+corroboration, destination candidate, and selector-count path, reports
+copied/reused aggregate counts, and exits before `duplicate`. Gmail transfer
+plans are intentionally capped at ten messages per transaction. Execution
+checks destination visibility after fixed 1.5 and 4.8 second delays for at
+most 6.3 seconds after `duplicate`; it never polls continuously.
+
+After confirmed Gmail label removal, execution requests one Mail
+synchronization and returns `pending_mail_sync` without launching a
+predictably premature full cache verification. Do not reapply. Run one later
+bounded `verify` before beginning another sequential block.
 
 ## OAuth
 

@@ -21,19 +21,23 @@ access token once per process so concurrent reads never race token refresh.
 For Gmail Inbox-to-local:
 
 1. Resolve the account, source, and destination once.
-2. Bind and validate every source by numeric ID.
+2. Resolve the complete bounded numeric-ID selector once and validate every
+   selected source from that result. Do not launch a separate indexed Mail
+   query per message or a redundant verifier process before the copy script.
 3. Submit one bulk `duplicate` command using a direct numeric-ID-filtered Mail
    object specifier capped at ten transfer messages.
 4. Refresh destination Message-IDs after `duplicate` and corroborate only the
    matching candidates. Because Mail may expose accepted copies
-   asynchronously, retry that snapshot on the fixed delays 0.1, 0.2, 0.4,
-   0.8, 1.6, and 3.2 seconds. Treat the final result as the local-copy barrier;
-   never poll beyond this bounded schedule.
+   asynchronously, take snapshots after fixed 1.5 and 4.8 second delays,
+   stopping after the first complete snapshot. Treat the final result as the
+   local-copy barrier; never poll beyond the same 6.3-second wait bound.
 5. Remove only Gmail `INBOX` with bounded concurrent per-message responses.
    Wait for every response; on any failure, roll back every confirmed change
    before returning the error.
 6. Request one Mail synchronization.
-7. Perform one final indexed source check.
+7. Return `pending_mail_sync` without immediately querying the cache that was
+   just asked to synchronize. A later bounded `verify` establishes Mail's
+   display state before another sequential block begins.
 
 For local-to-local filing, use the same binding stage followed by one bulk
 `move`.
@@ -44,6 +48,10 @@ The Mail work should scale with batch size plus one destination Message-ID
 snapshot, not batch size multiplied by source-mailbox size. General metadata
 and local operations are capped at 250; Gmail transfers and batch body reads
 are capped at ten.
+
+For verification batches of ten or fewer, resolve the complete numeric-ID
+selector once and corroborate its returned messages in memory. Retain the
+per-ID verifier only as the larger general-operation fallback.
 
 For Gmail Inbox body retrieval, `get-batch --token --expected-account` performs
 two concurrent phases: first resolve and corroborate every selected identity

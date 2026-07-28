@@ -318,13 +318,15 @@ class AppleMailOperationTests(unittest.TestCase):
             expected_account="person@example.com",
             allowed_destinations=["On My Mac/Review"],
         )
-        self.assertEqual(result["status"], "complete")
+        self.assertEqual(result["status"], "pending_mail_sync")
         self.assertEqual(result["local_copies_submitted"], 1)
         self.assertEqual(result["local_copies_reused"], 0)
         self.assertEqual(result["local_copy_barrier_attempts"], 2)
         self.assertIn("gmail_preflight", result["phase_seconds"])
         self.assertIn("gmail_label_removal", result["phase_seconds"])
         self.assertIn("transaction_total", result["phase_seconds"])
+        self.assertNotIn("mail_preflight", result["phase_seconds"])
+        self.assertNotIn("final_verify", result["phase_seconds"])
         self.assertEqual(client.modifications, [("gmail-1", False, True)])
         self.assertEqual(
             [call[0] for call in runner.calls].count(
@@ -366,7 +368,7 @@ class AppleMailOperationTests(unittest.TestCase):
         self.assertEqual(result["local_copy_barrier_attempts"], 2)
         self.assertEqual(client.modifications, [])
 
-    def test_final_numeric_id_reuse_fails_closed(self):
+    def test_gmail_transfer_defers_mail_cache_check_to_later_verify(self):
         plan = build_message_plan(
             "gmail_inbox_to_local",
             account_source("person@example.com"),
@@ -381,14 +383,18 @@ class AppleMailOperationTests(unittest.TestCase):
                 "copy_account_to_local.applescript": copy_barrier()
             },
         )
-        with self.assertRaises(OperationError):
-            apply_gmail_inbox_to_local(
-                runner,
-                FakeGmailClient(),
-                plan,
-                expected_account="person@example.com",
-                allowed_destinations=["On My Mac/Review"],
-            )
+        result = apply_gmail_inbox_to_local(
+            runner,
+            FakeGmailClient(),
+            plan,
+            expected_account="person@example.com",
+            allowed_destinations=["On My Mac/Review"],
+        )
+        self.assertEqual(result["status"], "pending_mail_sync")
+        self.assertNotIn(
+            "verify_messages.applescript",
+            [call[0] for call in runner.calls],
+        )
 
     def test_parallel_gmail_failure_rolls_back_every_confirmed_change(self):
         class PartialFailureClient:

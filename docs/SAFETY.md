@@ -44,8 +44,9 @@ Every mutation must:
 6. reject stale, missing, duplicate, or ambiguous identities;
 7. operate on one bounded batch, at most 250 messages;
 8. use one bulk Mail command for a batch, not a process per message;
-9. verify the complete result once and report unsettled display state as
-   pending rather than polling continuously; and
+9. verify the local copy barrier before Gmail mutation, request one Mail
+   synchronization afterward, and report the cache state as pending until one
+   later bounded verification rather than querying or polling immediately; and
 10. append a start and outcome event to a private audit log.
 
 Local move source and destination must differ. Protected destination leaf
@@ -65,7 +66,8 @@ approved generic transaction is:
 3. resolve the same messages through Gmail;
 4. remove only `INBOX`;
 5. add `INBOX` back if a later Gmail mutation in the batch fails;
-6. request one Mail synchronization and perform one indexed final check.
+6. request one Mail synchronization and return `pending_mail_sync`; perform
+   one later bounded verification before beginning another sequential block.
 
 The Gmail request layer allows only profile lookup, message search, bounded
 metadata/full-message reads, and a single-message modification whose sole
@@ -74,9 +76,9 @@ ten-message transfer/read limit. It rejects other labels, server-side batch
 mutation, unsafe methods, and unsafe endpoints.
 
 The Gmail API response is authoritative server confirmation. If Mail still
-shows a corroborated source message after synchronization, return
-`pending_mail_sync`; a later `verify` is read-only. If a numeric ID resolves to
-different metadata, fail closed.
+shows a corroborated source message after synchronization, the later `verify`
+continues to report it. If a numeric ID resolves to different metadata, fail
+closed.
 
 ## Inventory and content
 

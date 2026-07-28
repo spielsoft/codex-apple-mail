@@ -439,15 +439,6 @@ def apply_gmail_inbox_to_local(
         if "INBOX" not in labels or "TRASH" in labels:
             raise OperationError("Gmail source labels do not match the required pre-state")
 
-    phase_started = perf_counter()
-    before = verify_messages(runner, plan)
-    phase_seconds["mail_preflight"] = _elapsed(phase_started)
-    _require_valid_sources(
-        before, plan["messages"], "Mail source preflight failed"
-    )
-    if not _destinations_are_valid(before, plan["messages"], required=False):
-        raise OperationError("Local destination preflight failed")
-
     _append_audit(
         audit_path,
         {
@@ -487,20 +478,9 @@ def apply_gmail_inbox_to_local(
     phase_started = perf_counter()
     runner.run_raw("synchronize_account.applescript", [plan["source"]["account"]])
     phase_seconds["mail_synchronize"] = _elapsed(phase_started)
-    phase_started = perf_counter()
-    final = verify_messages(runner, plan)
-    phase_seconds["final_verify"] = _elapsed(phase_started)
-    if not _destinations_are_valid(final, plan["messages"], required=True):
-        raise OperationError("Final local destination verification failed")
-    if any(
-        row["SOURCE_ID_COUNT"] == "1" and row["SOURCE_IDENTITY"] != "true"
-        for row in final
-    ):
-        raise OperationError("A numeric source ID was reused by another message")
-    source_pending = any(row["SOURCE_ID_COUNT"] == "1" for row in final)
     phase_seconds["transaction_total"] = _elapsed(transaction_started)
     result = {
-        "status": "pending_mail_sync" if source_pending else "complete",
+        "status": "pending_mail_sync",
         "action": plan["action"],
         "plan_hash": plan["plan_hash"],
         "message_count": len(plan["messages"]),

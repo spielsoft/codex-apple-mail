@@ -84,16 +84,17 @@ on identityMatches(theMessage, expectedMessageID, expectedSubject, expectedSende
 	return true
 end identityMatches
 
-on indexedMessages(sourceMailbox, expectedMailID)
+on bulkMessages10(sourceMailbox, selectorMailIDs)
+	set {selectorMailID01, selectorMailID02, selectorMailID03, selectorMailID04, selectorMailID05, selectorMailID06, selectorMailID07, selectorMailID08, selectorMailID09, selectorMailID10} to selectorMailIDs
 	tell application "Mail"
 		try
-			return messages of sourceMailbox whose id is expectedMailID
+			return messages of sourceMailbox whose id is selectorMailID01 or id is selectorMailID02 or id is selectorMailID03 or id is selectorMailID04 or id is selectorMailID05 or id is selectorMailID06 or id is selectorMailID07 or id is selectorMailID08 or id is selectorMailID09 or id is selectorMailID10
 		on error errorMessage number errorNumber
 			if errorNumber is -1719 then return {}
 			error errorMessage number errorNumber
 		end try
 	end tell
-end indexedMessages
+end bulkMessages10
 
 on destinationSnapshot(destinationMailbox)
 	set destinationMessages to {}
@@ -164,6 +165,16 @@ on run argv
 		if not (exists mailbox (sourcePath as text) of sourceAccount) then error "Account mailbox not found: " & sourcePath
 		set sourceMailbox to mailbox (sourcePath as text) of sourceAccount
 	end tell
+	set plannedSelectorMailIDs to {}
+	repeat with itemNumber from 1 to itemCount
+		set argumentOffset to 5 + ((itemNumber - 1) * 6)
+		set end of plannedSelectorMailIDs to item argumentOffset of argv as integer
+	end repeat
+	repeat while (count of plannedSelectorMailIDs) < 10
+		set end of plannedSelectorMailIDs to -1
+	end repeat
+	set plannedSourceMessages to my bulkMessages10(sourceMailbox, plannedSelectorMailIDs)
+	if (count of plannedSourceMessages) is not itemCount then error "Planned bulk source selector count mismatch"
 
 	set initialDestination to my destinationSnapshot(destinationMailbox)
 	set destinationMessages to item 1 of initialDestination
@@ -179,7 +190,12 @@ on run argv
 		set expectedSender to item (argumentOffset + 3) of argv
 		set datePrefix to item (argumentOffset + 4) of argv
 		set expectedRead to item (argumentOffset + 5) of argv
-		set sourceMatches to my indexedMessages(sourceMailbox, expectedMailID)
+		set sourceMatches to {}
+		repeat with sourceReference in plannedSourceMessages
+			set sourceMessageCandidate to contents of sourceReference
+			tell application "Mail" to set candidateMailID to id of sourceMessageCandidate
+			if candidateMailID is expectedMailID then set end of sourceMatches to sourceMessageCandidate
+		end repeat
 		if (count of sourceMatches) is not 1 then error "Expected one indexed source match"
 		set sourceMessage to item 1 of sourceMatches
 		if not my identityMatches(sourceMessage, expectedMessageID, expectedSubject, expectedSender, datePrefix, expectedRead) then error "Indexed source identity check failed"
@@ -214,15 +230,16 @@ on run argv
 		end tell
 	end if
 
-	set finalDestination to my destinationSnapshot(destinationMailbox)
+	set finalDestination to initialDestination
 	set barrierAttempts to 1
 	if copyCount > 0 then
-		set barrierDelays to {0.1, 0.2, 0.4, 0.8, 1.6, 3.2}
+		set barrierDelays to {1.5, 4.8}
+		set barrierAttempts to 0
 		repeat with barrierDelay in barrierDelays
-			if my allDestinationsReady(item 1 of finalDestination, item 2 of finalDestination, argv, itemCount) then exit repeat
 			delay (contents of barrierDelay)
 			set finalDestination to my destinationSnapshot(destinationMailbox)
 			set barrierAttempts to barrierAttempts + 1
+			if my allDestinationsReady(item 1 of finalDestination, item 2 of finalDestination, argv, itemCount) then exit repeat
 		end repeat
 	end if
 	set destinationMessages to item 1 of finalDestination

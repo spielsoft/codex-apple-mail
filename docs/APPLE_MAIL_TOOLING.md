@@ -130,15 +130,18 @@ the copy script's resolution, identity, candidate, and selector-count path,
 reports missing and reused copies, then exits before `duplicate`. Gmail
 transfer transactions are capped at ten messages.
 
-During execution, the copy script rechecks destination visibility on a fixed,
-bounded schedule for at most 6.3 seconds after `duplicate`. It reports
+During execution, the copy script resolves the complete bounded numeric-ID
+selector once, validates every source, and rechecks destination visibility
+after fixed 1.5 and 4.8 second delays for at most 6.3 seconds after
+`duplicate`. It stops after the first complete snapshot and reports
 `pending_local_copy` without changing Gmail when Mail still has not exposed
 every exact copy.
 
 Execution reports `phase_seconds` for Gmail profile lookup, Gmail preflight,
-Mail preflight, local copy, Gmail label removal, Mail synchronization, final
-verification, and total transaction time. These timings contain no message
-content.
+local copy, Gmail label removal, Mail synchronization, and total transaction
+time. These timings contain no message content. The copy script is the
+authoritative Mail preflight and local-copy barrier, so execution does not
+launch redundant full verifier processes before or immediately after it.
 
 During Mail synchronization, an indexed read can transiently fail with Mail
 error `-10000`. Verification retries only that exact read after 0.1, 0.2, 0.4,
@@ -156,6 +159,11 @@ preflight identifies only plan item positions and mismatched field names; it
 never includes message content. During post-Gmail verification, Mail error
 `-1719` from an indexed source lookup is treated as the expected zero-result
 state; all other Mail errors remain failures.
+
+A successful Gmail label-removal phase returns `pending_mail_sync` after
+requesting one synchronization. Do not reapply. Wait one synchronization
+interval and run one bounded `verify`; begin another sequential block only
+after it proves the planned destination and source state.
 
 ## OAuth
 

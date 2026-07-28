@@ -20,7 +20,7 @@ BATCH_SCRIPTS = MUTATION_SCRIPTS[:3] + (
     APPLESCRIPTS / "verify_messages.applescript",
     APPLESCRIPTS / "get_messages.applescript",
 )
-INDEXED_MESSAGE_SCRIPTS = MUTATION_SCRIPTS[:3] + (
+INDEXED_MESSAGE_SCRIPTS = MUTATION_SCRIPTS[1:3] + (
     APPLESCRIPTS / "get_message.applescript",
     APPLESCRIPTS / "get_messages.applescript",
     APPLESCRIPTS / "verify_messages.applescript",
@@ -123,10 +123,12 @@ class AppleMailSafetyTests(unittest.TestCase):
         self.assertIn(
             "repeat while (count of selectorMailIDs) < 250", move_source
         )
-        self.assertNotIn("selectorMailID", verify_source)
-        self.assertNotIn(
-            "repeat while (count of selectorMailIDs)", verify_source
+        self.assertIn("on bulkMessages10(", verify_source)
+        self.assertIn(
+            "repeat while (count of selectorMailIDs) < 10", verify_source
         )
+        self.assertIn("selectorMailID10", verify_source)
+        self.assertNotIn("selectorMailID250", verify_source)
         self.assertNotIn("whose id is in", verify_source)
         self.assertIn("SOURCE_BULK_COUNT", verify_source)
         self.assertLess(
@@ -138,13 +140,20 @@ class AppleMailSafetyTests(unittest.TestCase):
         self.assertIn("DESTINATION_IDENTITY", copy_source)
         self.assertIn("BARRIER_ATTEMPTS", copy_source)
         self.assertIn(
-            "set barrierDelays to {0.1, 0.2, 0.4, 0.8, 1.6, 3.2}",
+            "set barrierDelays to {1.5, 4.8}",
             copy_source,
         )
         self.assertIn(
             "repeat with barrierDelay in barrierDelays", copy_source
         )
         self.assertNotIn("repeat while not", copy_source)
+        self.assertIn(
+            "set plannedSourceMessages to my bulkMessages10", copy_source
+        )
+        self.assertNotIn(
+            "set sourceMatches to my indexedMessages(sourceMailbox, expectedMailID)",
+            copy_source,
+        )
 
     def test_identity_checks_coerce_mail_sender_to_text(self):
         for script in MUTATION_SCRIPTS[:3] + (

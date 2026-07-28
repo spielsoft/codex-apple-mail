@@ -123,6 +123,24 @@ on indexedMessages(sourceMailbox, expectedMailID)
 	error "Indexed source lookup exhausted its retry bound"
 end indexedMessages
 
+on bulkMessages10(sourceMailbox, selectorMailIDs)
+	set {selectorMailID01, selectorMailID02, selectorMailID03, selectorMailID04, selectorMailID05, selectorMailID06, selectorMailID07, selectorMailID08, selectorMailID09, selectorMailID10} to selectorMailIDs
+	set retryDelays to {0.1, 0.2, 0.4, 0.8}
+	repeat with attemptNumber from 1 to 5
+		try
+			tell application "Mail" to return messages of sourceMailbox whose id is selectorMailID01 or id is selectorMailID02 or id is selectorMailID03 or id is selectorMailID04 or id is selectorMailID05 or id is selectorMailID06 or id is selectorMailID07 or id is selectorMailID08 or id is selectorMailID09 or id is selectorMailID10
+		on error errorMessage number errorNumber
+			if errorNumber is -1719 then return {}
+			if errorNumber is -10000 and attemptNumber < 5 then
+				delay (item attemptNumber of retryDelays)
+			else
+				error errorMessage number errorNumber
+			end if
+		end try
+	end repeat
+	error "Bulk source lookup exhausted its retry bound"
+end bulkMessages10
+
 on destinationState(destinationMessages, destinationMessageIDs, expectedMessageID, expectedSubject, expectedSender, datePrefix)
 	set normalizedExpectedID to my normalizedMessageID(expectedMessageID)
 	set destinationCount to 0
@@ -163,6 +181,20 @@ on run argv
 
 	set sourceRows to {}
 	set sourceBulkCount to 0
+	set useBulkSourceLookup to itemCount ≤ 10
+	set bulkSourceMessages to {}
+	if useBulkSourceLookup then
+		set selectorMailIDs to {}
+		repeat with itemNumber from 1 to itemCount
+			set argumentOffset to 6 + ((itemNumber - 1) * 6)
+			set end of selectorMailIDs to item argumentOffset of argv as integer
+		end repeat
+		repeat while (count of selectorMailIDs) < 10
+			set end of selectorMailIDs to -1
+		end repeat
+		set bulkSourceMessages to my bulkMessages10(sourceMailbox, selectorMailIDs)
+		set sourceBulkCount to count of bulkSourceMessages
+	end if
 	repeat with itemNumber from 1 to itemCount
 		set argumentOffset to 6 + ((itemNumber - 1) * 6)
 		set expectedMailID to item argumentOffset of argv as integer
@@ -170,9 +202,18 @@ on run argv
 		set expectedSubject to item (argumentOffset + 2) of argv
 		set expectedSender to item (argumentOffset + 3) of argv
 		set datePrefix to item (argumentOffset + 4) of argv
-		set sourceMatches to my indexedMessages(sourceMailbox, expectedMailID)
+		if useBulkSourceLookup then
+			set sourceMatches to {}
+			repeat with sourceReference in bulkSourceMessages
+				set sourceMessageCandidate to contents of sourceReference
+				tell application "Mail" to set candidateMailID to id of sourceMessageCandidate
+				if candidateMailID is expectedMailID then set end of sourceMatches to sourceMessageCandidate
+			end repeat
+		else
+			set sourceMatches to my indexedMessages(sourceMailbox, expectedMailID)
+		end if
 		set sourceCount to count of sourceMatches
-		set sourceBulkCount to sourceBulkCount + sourceCount
+		if not useBulkSourceLookup then set sourceBulkCount to sourceBulkCount + sourceCount
 		set sourceIdentity to false
 		set sourceMessageIDMatch to false
 		set sourceSubjectMatch to false
