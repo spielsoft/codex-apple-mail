@@ -3,10 +3,10 @@ from typing import Any, Dict, FrozenSet, List, Optional, Sequence
 
 from .gmail import (
     FORBIDDEN_LABEL,
-    PERMITTED_LABEL,
+    MUTABLE_SOURCE_LABELS,
     GmailClient,
     GmailError,
-    validate_archived_labels,
+    validate_removed_source_label,
 )
 from .limits import GMAIL_NETWORK_WORKERS, PUBLIC_GMAIL_BATCH_LIMIT
 
@@ -57,26 +57,74 @@ def _read_labels(
         return list(executor.map(read, gmail_ids))
 
 
-def _restore_inbox(
+def _modify_label(
+    client: GmailClient,
+    gmail_id: str,
+    label: str,
+    *,
+    add: bool = False,
+    remove: bool = False,
+) -> Dict[str, Any]:
+    if label == "INBOX" and not hasattr(client, "modify_label"):
+        return client.modify_inbox_label(
+            gmail_id,
+            add=add,
+            remove=remove,
+        )
+    return client.modify_label(
+        gmail_id,
+        label,
+        add=add,
+        remove=remove,
+    )
+
+
+def _restore_source_state(
     client: GmailClient,
     gmail_ids: Sequence[str],
     observations: Sequence[Optional[FrozenSet[str]]],
+    source_label: str,
 ) -> None:
     restore_ids = [
-        gmail_id
+        (gmail_id, labels)
         for gmail_id, labels in zip(gmail_ids, observations)
-        if labels is None or PERMITTED_LABEL not in labels
+        if (
+            labels is None
+            or source_label not in labels
+            or (source_label == "SPAM" and "INBOX" in labels)
+        )
     ]
     if not restore_ids:
         return
 
-    def restore(gmail_id: str) -> None:
-        try:
-            client.modify_inbox_label(gmail_id, add=True)
-        except Exception:
-            # A lost response is ambiguous in the same way as the failed
-            # removal. The authoritative read below determines the outcome.
-            pass
+    def restore(item: Any) -> None:
+        gmail_id, labels = item
+        if labels is None or source_label not in labels:
+            try:
+                _modify_label(
+                    client,
+                    gmail_id,
+                    source_label,
+                    add=True,
+                )
+            except Exception:
+                # The authoritative read below determines whether a lost
+                # response still changed the label.
+                pass
+        if source_label == "SPAM" and (
+            labels is None or "INBOX" in labels
+        ):
+            try:
+                _modify_label(
+                    client,
+                    gmail_id,
+                    "INBOX",
+                    remove=True,
+                )
+            except Exception:
+                # Continue to the authoritative final read even if cleanup
+                # returned an ambiguous response.
+                pass
 
     with ThreadPoolExecutor(
         max_workers=min(GMAIL_NETWORK_WORKERS, len(restore_ids))
@@ -87,10 +135,16 @@ def _restore_inbox(
 def _reconcile_failed_removal(
     client: GmailClient,
     gmail_ids: Sequence[str],
+    source_label: str,
     original_error: Exception,
 ) -> None:
     observations = _read_labels(client, gmail_ids)
-    _restore_inbox(client, gmail_ids, observations)
+    _restore_source_state(
+        client,
+        gmail_ids,
+        observations,
+        source_label,
+    )
     final_labels = _read_labels(client, gmail_ids)
 
     unknown_count = sum(labels is None for labels in final_labels)
@@ -103,7 +157,11 @@ def _reconcile_failed_removal(
         ) from original_error
 
     incomplete_count = sum(
-        PERMITTED_LABEL not in labels or FORBIDDEN_LABEL in labels
+        (
+            source_label not in labels
+            or FORBIDDEN_LABEL in labels
+            or (source_label == "SPAM" and "INBOX" in labels)
+        )
         for labels in final_labels
         if labels is not None
     )
@@ -116,25 +174,46 @@ def _reconcile_failed_removal(
     raise original_error
 
 
-def remove_inbox_labels_with_rollback(
+def remove_source_labels_with_rollback(
     client: GmailClient,
     gmail_messages: Sequence[Dict[str, Any]],
+    source_label: str,
 ) -> List[str]:
-    """Remove INBOX atomically from the caller's perspective.
+    """Remove one allowlisted source label atomically from the caller's view.
 
     When any concurrent request fails or returns an invalid result, every
     planned Gmail ID is read authoritatively. Any message observed without
-    INBOX (and any message whose state could not initially be read) is restored,
-    then every planned ID is read again before the original failure is exposed.
+    the source label (and any message whose state could not initially be read)
+    is restored, then every planned ID is read again before the original
+    failure is exposed.
     """
 
+    if source_label not in MUTABLE_SOURCE_LABELS:
+        raise GmailError("Gmail source label is not allowlisted")
     gmail_ids = _message_ids(gmail_messages)
 
     def remove(gmail_id: str) -> None:
-        response = client.modify_inbox_label(gmail_id, remove=True)
+        response = _modify_label(
+            client,
+            gmail_id,
+            source_label,
+            remove=True,
+        )
         if str(response.get("id", "")) != gmail_id:
             raise GmailError("Gmail label-removal response ID changed")
-        validate_archived_labels(response)
+        raw_labels = response.get("labelIds")
+        if not isinstance(raw_labels, list):
+            raise GmailError("Gmail label-removal response omitted labels")
+        if source_label == "SPAM" and "INBOX" in set(raw_labels):
+            response = _modify_label(
+                client,
+                gmail_id,
+                "INBOX",
+                remove=True,
+            )
+            if str(response.get("id", "")) != gmail_id:
+                raise GmailError("Gmail label-removal response ID changed")
+        validate_removed_source_label(response, source_label)
 
     errors: List[Exception] = []
     with ThreadPoolExecutor(
@@ -148,5 +227,50 @@ def remove_inbox_labels_with_rollback(
                 errors.append(error)
 
     if errors:
-        _reconcile_failed_removal(client, gmail_ids, errors[0])
+        _reconcile_failed_removal(
+            client,
+            gmail_ids,
+            source_label,
+            errors[0],
+        )
+    if source_label == "SPAM":
+        final_labels = _read_labels(client, gmail_ids)
+        invalid_count = sum(
+            labels is None
+            or source_label in labels
+            or "INBOX" in labels
+            or FORBIDDEN_LABEL in labels
+            for labels in final_labels
+        )
+        if invalid_count:
+            _reconcile_failed_removal(
+                client,
+                gmail_ids,
+                source_label,
+                GmailError(
+                    "Gmail SPAM removal did not reach the required final state"
+                ),
+            )
     return gmail_ids
+
+
+def remove_inbox_labels_with_rollback(
+    client: GmailClient,
+    gmail_messages: Sequence[Dict[str, Any]],
+) -> List[str]:
+    return remove_source_labels_with_rollback(
+        client,
+        gmail_messages,
+        "INBOX",
+    )
+
+
+def remove_spam_labels_with_rollback(
+    client: GmailClient,
+    gmail_messages: Sequence[Dict[str, Any]],
+) -> List[str]:
+    return remove_source_labels_with_rollback(
+        client,
+        gmail_messages,
+        "SPAM",
+    )

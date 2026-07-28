@@ -12,7 +12,7 @@ The `apple-mail` skill owns reusable email mechanics:
 - read/unread changes;
 - local mailbox creation;
 - local-to-local bulk moves;
-- Gmail Inbox-to-local transfers;
+- Gmail Inbox- and Spam-to-local transfers;
 - verification, OAuth, rollback, and append-only audit records.
 
 The plugin contains no filing policy or user-specific state.
@@ -21,8 +21,9 @@ The plugin contains no filing policy or user-specific state.
 
 Python standard-library code validates plans and orchestrates narrow
 AppleScripts. AppleScript is the public Apple Mail interface. A constrained
-Gmail API client provides optional bounded Inbox body reads and handles lookup
-plus adding or removing `INBOX` for Gmail transfers.
+Gmail API client provides optional bounded body reads for recent selections
+from any account mailbox and handles lookup plus adding or removing only
+`INBOX` and `SPAM` for explicit Gmail transfers.
 
 The tool never reads or writes Mail's private database.
 
@@ -47,6 +48,7 @@ RFC Message-ID.
 ## Plan actions
 
 - `gmail_inbox_to_local`
+- `gmail_spam_to_local`
 - `move_local`
 - `set_read`
 - `create_local_mailbox`
@@ -57,12 +59,14 @@ requires `--execute`; destination-bearing plans also require an exact
 
 ## Gmail transfer
 
-AppleScript cross-store `move` does not reliably remove Gmail's `INBOX` label.
+AppleScript cross-store `move` does not reliably remove Gmail source labels.
 The copy script resolves one bounded numeric-ID selector, validates every
 source from that result, bulk-copies missing local messages, and verifies the
 complete destination. Plans above ten messages invoke this copy boundary in
-ordered ten-message chunks. The transaction then removes only Gmail `INBOX` and
-requests one Mail synchronization. It returns `pending_mail_sync` rather than
+ordered ten-message chunks. The transaction then removes the action-specific
+Gmail source label. A Spam transaction also removes `INBOX` if Gmail adds it
+while removing `SPAM`. It requests one Mail synchronization and returns
+`pending_mail_sync` rather than
 immediately querying the cache that it just asked to synchronize; one later
 bounded, audited reconciliation gates the next sequential block.
 Reconciliation owns the terminal state transition: it appends `complete` only
@@ -72,16 +76,17 @@ and records `mutation_state_unknown` for invalid, unreadable, ambiguous, or
 numeric-ID-reuse evidence. `DESTINATION_COUNT=1` already represents a full
 identity match because the verifier rejects Message-ID collisions and counts
 only messages whose complete corroborating identity matches. Partial Gmail
-mutation rolls back by authoritatively reading every planned Gmail ID, adding
-`INBOX` where removal is observed or the initial state cannot be read, and
-reading the complete batch again. An unreadable final label state is audited
-as `mutation_state_unknown`, never as a confirmed rollback. Gmail lookup and
+mutation rolls back by authoritatively reading every planned Gmail ID and
+restoring the action-specific pre-state. Inbox rollback restores `INBOX`; Spam
+rollback restores `SPAM` and ensures `INBOX` is absent. It then reads the
+complete batch again. An unreadable final label state is audited as
+`mutation_state_unknown`, never as a confirmed rollback. Gmail lookup and
 label requests accept a fifty-message transaction but use at most ten
 concurrent workers; each label change still requires its own confirmed
 outcome. Mail Apple Events remain serial and transfer selectors are chunked at
 ten messages.
 
-After `INBOX` removal, Mail can raise error `-1719` while an indexed source
+After source-label removal, Mail can raise error `-1719` while an indexed source
 filter is disappearing instead of returning an empty collection. The indexed
 lookup boundary normalizes only that error to zero matches; other Mail errors
 still propagate. Pre-mutation callers continue to reject zero matches.
@@ -90,6 +95,13 @@ Display lag returns `pending_mail_sync`; the tool neither polls continuously
 nor performs a predictably premature immediate cache check. The reconciliation
 command is read-only, does not require OAuth, and emits only aggregate state
 plus generic reason codes to its append-only audit.
+
+Read access deliberately remains broader than mutation. Apple Mail supplies
+the exact account mailbox and recent numeric-ID selection. Gmail RFC
+Message-ID resolution includes Spam and Trash, so OAuth body retrieval can
+corroborate messages from Junk, Important, Sent, custom-label, and other
+mailboxes. No arbitrary mailbox name, label, or search filter is translated
+into a Gmail mutation.
 
 ## Layout
 

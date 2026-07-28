@@ -17,6 +17,7 @@ from .operations import (
     append_audit_event,
     apply_create_mailbox,
     apply_gmail_inbox_to_local,
+    apply_gmail_spam_to_local,
     apply_local_move,
     apply_set_read,
     probe_account_to_local_copy,
@@ -155,12 +156,11 @@ def command_get_batch(args: argparse.Namespace) -> None:
         expected_account = getattr(args, "expected_account", None)
         if (
             source["kind"] != "account"
-            or source["mailbox"] != "INBOX"
             or not expected_account
         ):
             raise ValueError(
-                "OAuth-backed get-batch requires account-qualified INBOX "
-                "and --expected-account"
+                "OAuth-backed get-batch requires an account-qualified "
+                "mailbox and --expected-account"
             )
         if source["account"].casefold() != expected_account.casefold():
             raise ValueError("Mail account does not match --expected-account")
@@ -211,6 +211,23 @@ def command_plan_transfer(args: argparse.Namespace) -> None:
     plan = build_message_plan(
         "gmail_inbox_to_local",
         account_source(args.account, "INBOX"),
+        records,
+        destination=local_destination(args.destination),
+    )
+    _write_plan(plan, args.output)
+
+
+def command_plan_spam_transfer(args: argparse.Namespace) -> None:
+    records = _selection_records(args.selection)
+    if len(records) > PUBLIC_GMAIL_BATCH_LIMIT:
+        raise ValueError(
+            "Gmail transfer batch size cannot exceed {} messages".format(
+                PUBLIC_GMAIL_BATCH_LIMIT
+            )
+        )
+    plan = build_message_plan(
+        "gmail_spam_to_local",
+        account_source(args.account, args.mailbox),
         records,
         destination=local_destination(args.destination),
     )
@@ -310,12 +327,17 @@ def command_apply(args: argparse.Namespace) -> None:
                 allowed_destinations=args.allow_destination,
                 audit_path=args.audit,
             )
-        elif action == "gmail_inbox_to_local":
+        elif action in ("gmail_inbox_to_local", "gmail_spam_to_local"):
             if args.token is None or not args.expected_account:
                 raise ValueError(
                     "--token and --expected-account are required for Gmail transfer"
                 )
-            result = apply_gmail_inbox_to_local(
+            handler = (
+                apply_gmail_inbox_to_local
+                if action == "gmail_inbox_to_local"
+                else apply_gmail_spam_to_local
+            )
+            result = handler(
                 runner,
                 GmailClient(TokenStore(args.token)),
                 plan,
@@ -394,6 +416,21 @@ def build_parser() -> argparse.ArgumentParser:
     transfer.add_argument("--selection", type=Path, required=True)
     transfer.add_argument("--output", type=Path, required=True)
     transfer.set_defaults(handler=command_plan_transfer)
+
+    spam_transfer = subparsers.add_parser(
+        "plan-gmail-junk-transfer",
+        aliases=["plan-gmail-spam-transfer"],
+    )
+    spam_transfer.add_argument("--account", required=True)
+    spam_transfer.add_argument(
+        "--mailbox",
+        required=True,
+        help="Exact Apple Mail mailbox name for Gmail Spam/Junk",
+    )
+    spam_transfer.add_argument("--destination", required=True)
+    spam_transfer.add_argument("--selection", type=Path, required=True)
+    spam_transfer.add_argument("--output", type=Path, required=True)
+    spam_transfer.set_defaults(handler=command_plan_spam_transfer)
 
     local_move = subparsers.add_parser("plan-local-move")
     local_move.add_argument("--source", required=True)

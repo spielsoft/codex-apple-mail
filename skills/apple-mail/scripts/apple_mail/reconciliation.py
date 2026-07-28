@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Sequence
 
 from .mail import MailRunner
 from .operations import append_audit_event, verify_messages
-from .plans import validate_plan
+from .plans import GMAIL_TRANSFER_ACTIONS, validate_plan
 
 
 COMPLETE = "complete"
@@ -44,8 +44,8 @@ def classify_gmail_transfer_state(
 ) -> Dict[str, Any]:
     """Classify a bounded Mail verification without exposing message details."""
     validate_plan(plan)
-    if plan["action"] != "gmail_inbox_to_local":
-        raise ValueError("Reconciliation requires a Gmail Inbox-to-local plan")
+    if plan["action"] not in GMAIL_TRANSFER_ACTIONS:
+        raise ValueError("Reconciliation requires a Gmail source-to-local plan")
 
     messages = plan["messages"]
     expected = {str(message["mail_id"]): message for message in messages}
@@ -155,8 +155,8 @@ def reconcile_gmail_transfer(
 ) -> Dict[str, Any]:
     """Verify, classify, and audit a Gmail transfer without mutating anything."""
     validate_plan(plan)
-    if plan["action"] != "gmail_inbox_to_local":
-        raise ValueError("Reconciliation requires a Gmail Inbox-to-local plan")
+    if plan["action"] not in GMAIL_TRANSFER_ACTIONS:
+        raise ValueError("Reconciliation requires a Gmail source-to-local plan")
     try:
         rows = verify_messages(runner, plan)
         result = classify_gmail_transfer_state(plan, rows)

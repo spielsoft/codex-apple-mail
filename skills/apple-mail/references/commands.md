@@ -20,6 +20,14 @@ in the normal workspace sandbox.
   --start 1 --limit 50
 
 "$APPLE_MAIL" list \
+  --account "person@example.com" --mailbox "Junk" \
+  --start 1 --limit 50
+
+"$APPLE_MAIL" list \
+  --account "person@example.com" --mailbox "Custom Label" \
+  --start 1 --limit 50
+
+"$APPLE_MAIL" list \
   --local "On My Mac/Archive" \
   --start 1 --limit 50
 
@@ -34,7 +42,7 @@ in the normal workspace sandbox.
   --body-limit 50000
 
 "$APPLE_MAIL" get-batch \
-  --account "person@example.com" --mailbox INBOX \
+  --account "person@example.com" --mailbox "Junk" \
   --selection selection.json \
   --body-limit 50000 \
   --token /private/path/gmail-token.json \
@@ -55,6 +63,13 @@ the tool does not retrieve attachment content. It falls back to one bounded
 Mail batch after the completed Gmail identity barrier. Authentication, network,
 and identity failures do not trigger this fallback. Do not parallelize
 singleton `get` calls against Mail.
+
+`list`, `get`, and `get-batch` accept any exact account mailbox returned by
+`discover`, including Junk/Spam, Important, Sent, and custom Gmail-label
+mailboxes. OAuth RFC Message-ID lookup includes Spam and Trash so a recent Mail
+selection can be corroborated there. These commands do not change labels.
+Arbitrary Gmail search syntax is not exposed as a mutation or as a replacement
+for the recent Mail selection and numeric-ID binding.
 
 `get-batch` retains `ATTACHMENT_COUNT` and adds
 `ATTACHMENT_COUNT_SOURCE`. A source of `apple_mail` means Mail's native
@@ -109,6 +124,12 @@ Use a list or an object containing `messages`, `items`, or `records`:
   --destination "On My Mac/Review" \
   --selection selection.json --output transfer-plan.json
 
+"$APPLE_MAIL" plan-gmail-junk-transfer \
+  --account "person@example.com" \
+  --mailbox "Junk" \
+  --destination "On My Mac/Review" \
+  --selection selection.json --output junk-transfer-plan.json
+
 "$APPLE_MAIL" plan-local-move \
   --source "On My Mac/Review" \
   --destination "On My Mac/Archive" \
@@ -152,11 +173,13 @@ Use a list or an object containing `messages`, `items`, or `records`:
 
 Read-state plans omit `--allow-destination`. All execution requires `--audit`.
 Gmail execution additionally requires `--token` and `--expected-account`.
-Read-only Gmail resolution and per-message `INBOX` label changes accept at
-most fifty selected messages and use at most ten concurrent network requests.
-Label removal still requires one confirmed response per message; if any
-request fails, every confirmed change is rolled back before the command
-reports failure.
+Read-only Gmail resolution and per-message `INBOX` or `SPAM` label changes
+accept at most fifty selected messages and use at most ten concurrent network
+requests. Inbox plans remove only `INBOX`. Junk plans require `SPAM` on every
+resolved Gmail message, remove `SPAM`, and remove `INBOX` if Gmail adds it
+during that transition. Label removal still requires a confirmed final state
+per message; if any request fails, every confirmed change is rolled back before
+the command reports failure.
 Verification reports separate source match Booleans for Message-ID, subject,
 sender, and received time. A failed mutation preflight names only the plan item
 positions and mismatched field names; it does not print message content.
@@ -165,13 +188,14 @@ Inbox lookup as zero source matches; every other Mail error still propagates.
 Mail error `-10000` is retried only for the same indexed read on the bounded
 0.1, 0.2, 0.4, and 0.8 second schedule. A persistent failure remains an error
 and is never interpreted as source absence.
-`probe-copy` is valid only for a Gmail Inbox-to-local plan. It executes the
-copy AppleScript's bounded source-selector resolution, in-memory identity
-corroboration, destination candidate, and selector-count path, reports
-copied/reused aggregate counts, and exits before `duplicate`. Gmail transfer
-plans are capped at fifty messages per transaction. Mail copy and verification
-work is split into ordered chunks of at most ten messages; Gmail label removal
-does not begin until the local-copy barrier has passed for every chunk.
+`probe-copy` is valid only for a Gmail Inbox- or Spam-to-local plan. It
+executes the copy AppleScript's bounded source-selector resolution, in-memory
+identity corroboration, destination candidate, and selector-count path,
+reports copied/reused aggregate counts, and exits before `duplicate`. Gmail
+transfer plans are capped at fifty messages per transaction. Mail copy and
+verification work is split into ordered chunks of at most ten messages; Gmail
+label removal does not begin until the local-copy barrier has passed for every
+chunk.
 Execution checks each submitted chunk's destination visibility after fixed 1.5
 and 4.8 second delays for at most 6.3 seconds after `duplicate`; it never polls
 continuously.
@@ -207,3 +231,8 @@ matches.
 
 The same token can be supplied to the read-only `get-batch` fast path. No
 additional scope or authorization grant is required.
+
+The `plan-gmail-spam-transfer` spelling is accepted as an alias for
+`plan-gmail-junk-transfer`. Always pass the exact Mail mailbox name from
+`discover`; the Gmail label preflight, not that display name, proves that every
+selected message is actually in `SPAM`.

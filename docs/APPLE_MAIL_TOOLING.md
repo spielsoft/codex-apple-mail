@@ -22,6 +22,14 @@ scripts/apple-mail list \
   --start 1 --limit 50
 
 scripts/apple-mail list \
+  --account "person@example.com" --mailbox "Junk" \
+  --start 1 --limit 50
+
+scripts/apple-mail list \
+  --account "person@example.com" --mailbox "Custom Label" \
+  --start 1 --limit 50
+
+scripts/apple-mail list \
   --local "On My Mac/Archive" \
   --start 1 --limit 50
 
@@ -31,7 +39,7 @@ scripts/apple-mail get \
   --body-limit 50000
 
 scripts/apple-mail get-batch \
-  --account "person@example.com" --mailbox INBOX \
+  --account "person@example.com" --mailbox "Junk" \
   --selection local-artifacts/selection.json \
   --body-limit 50000
 
@@ -60,6 +68,12 @@ through an attachment identifier, the request layer does not fetch that
 attachment; after the Gmail identity barrier succeeds, `get-batch` falls back
 to the same bounded Mail batch rather than returning an incomplete body. Other
 Gmail failures remain errors and do not trigger fallback.
+
+The exact account mailbox may be Junk/Spam, Important, Sent, Trash, or a
+custom Gmail-label mailbox returned by `discover`. OAuth lookup includes Spam
+and Trash so it can corroborate those recent Mail selections. Listing and body
+retrieval remain read-only; mailbox names and Gmail search concepts never
+authorize label mutation.
 
 `ATTACHMENT_COUNT_SOURCE` identifies how `get-batch` produced
 `ATTACHMENT_COUNT`: `apple_mail` is Mail's native attachment object count and
@@ -92,6 +106,13 @@ scripts/apple-mail plan-gmail-transfer \
   --destination "On My Mac/Review" \
   --selection local-artifacts/selection.json \
   --output local-artifacts/transfer-plan.json
+
+scripts/apple-mail plan-gmail-junk-transfer \
+  --account "person@example.com" \
+  --mailbox "Junk" \
+  --destination "On My Mac/Review" \
+  --selection local-artifacts/selection.json \
+  --output local-artifacts/junk-transfer-plan.json
 
 scripts/apple-mail plan-local-move \
   --source "On My Mac/Review" \
@@ -138,13 +159,19 @@ scripts/apple-mail reconcile \
 scripts/apple-mail probe-copy --plan local-artifacts/transfer-plan.json
 ```
 
-`probe-copy` is a read-only diagnostic for Gmail transfer plans. It exercises
-the copy script's resolution, identity, candidate, and selector-count path,
-reports missing and reused copies, then exits before `duplicate`. Gmail
-transfer transactions are capped at fifty messages. The Python transaction
-orchestrator splits Mail copy and verification work into ordered chunks of at
-most ten messages, while keeping the plan, audit, Gmail identity barrier, and
-Gmail label rollback as one fifty-message transaction.
+`probe-copy` is a read-only diagnostic for Gmail Inbox and Spam transfer
+plans. It exercises the copy script's resolution, identity, candidate, and
+selector-count path, reports missing and reused copies, then exits before
+`duplicate`. Gmail transfer transactions are capped at fifty messages. The
+Python transaction orchestrator splits Mail copy and verification work into
+ordered chunks of at most ten messages, while keeping the plan, audit, Gmail
+identity barrier, and Gmail label rollback as one fifty-message transaction.
+
+Inbox plans remove only `INBOX`. Junk plans require `SPAM` on every resolved
+Gmail message, remove `SPAM`, and remove `INBOX` if Gmail adds it during the
+not-spam transition. A failed Junk transaction restores `SPAM`, ensures
+`INBOX` is absent, and verifies the complete batch authoritatively before
+reporting rollback.
 
 During execution, each copy-script invocation resolves its complete bounded
 numeric-ID selector once, validates every source, and rechecks destination

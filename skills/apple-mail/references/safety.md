@@ -1,7 +1,8 @@
 # Safety
 
 Allowed operations are bounded reads, read/unread changes, local mailbox
-creation, local-to-local moves, and Gmail Inbox-to-local transfers.
+creation, local-to-local moves, and explicit Gmail Inbox- or Spam-to-local
+transfers.
 
 Never:
 
@@ -18,10 +19,15 @@ Every mutation must use a canonical hashed plan, exact source identity,
 caller-supplied destination allowlist, `--execute`, bounded batch, batch
 verification, and append-only audit.
 
-For Gmail transfers, the only server mutation is adding or removing the
-`INBOX` label. The local-copy barrier must pass before removing `INBOX`.
-Adding `INBOX` is the only rollback. A message remaining in All Mail is
+For Gmail transfers, the only mutable source labels are `INBOX` and `SPAM`.
+The complete local-copy barrier must pass before either is removed. Inbox
+rollback restores `INBOX`. Spam rollback restores `SPAM` and ensures `INBOX`
+is absent. A successful Spam transfer also removes `INBOX` if Gmail adds it
+while the message is marked not spam. A message remaining in All Mail is
 expected.
+
+Reading an exact Sent, Important, custom-label, Trash, or other account
+mailbox does not authorize any Gmail label mutation.
 
 Protected local destination leaf names include Trash, Deleted Messages, Junk,
 Outbox, Drafts, Sent, and Send Later.

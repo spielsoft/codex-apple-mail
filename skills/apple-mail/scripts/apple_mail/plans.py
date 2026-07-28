@@ -7,11 +7,13 @@ from typing import Any, Dict, Iterable, List, Optional
 
 SCHEMA_VERSION = 1
 PLAN_KIND = "apple_mail_operation_plan"
-MESSAGE_ACTIONS = {
-    "gmail_inbox_to_local",
-    "move_local",
-    "set_read",
+GMAIL_TRANSFER_SOURCE_LABELS = {
+    "gmail_inbox_to_local": "INBOX",
+    "gmail_spam_to_local": "SPAM",
 }
+GMAIL_TRANSFER_ACTIONS = frozenset(GMAIL_TRANSFER_SOURCE_LABELS)
+MESSAGE_ACTIONS = set(GMAIL_TRANSFER_ACTIONS) | {"move_local", "set_read"}
+DESTINATION_ACTIONS = GMAIL_TRANSFER_ACTIONS | {"move_local"}
 ALL_ACTIONS = MESSAGE_ACTIONS | {"create_local_mailbox"}
 LOCAL_PATH_PREFIX = "On My Mac/"
 PROTECTED_LOCAL_LEAVES = {
@@ -151,7 +153,11 @@ def build_create_mailbox_plan(path: str) -> Dict[str, Any]:
     return plan
 
 
-def _validate_source(source: Any, *, require_inbox: bool = False) -> None:
+def _validate_source(
+    source: Any,
+    *,
+    required_mailbox: Optional[str] = None,
+) -> None:
     if not isinstance(source, dict):
         raise PlanError("Plan source is missing")
     if source.get("kind") == "local":
@@ -163,8 +169,15 @@ def _validate_source(source: Any, *, require_inbox: bool = False) -> None:
             raise PlanError("Account source fields are not canonical")
         if not source.get("account") or not source.get("mailbox"):
             raise PlanError("Account source requires account and mailbox")
-        if require_inbox and source.get("mailbox") != "INBOX":
-            raise PlanError("Gmail transfer source must be account-qualified INBOX")
+        if (
+            required_mailbox is not None
+            and source.get("mailbox") != required_mailbox
+        ):
+            raise PlanError(
+                "Gmail transfer source must be account-qualified {}".format(
+                    required_mailbox
+                )
+            )
     else:
         raise PlanError("Unsupported source kind")
 
@@ -216,7 +229,7 @@ def validate_plan(plan: Dict[str, Any]) -> None:
         "messages",
         "plan_hash",
     }
-    if action in ("gmail_inbox_to_local", "move_local"):
+    if action in DESTINATION_ACTIONS:
         expected_fields.add("destination")
     if action == "set_read":
         expected_fields.add("target_read")
@@ -237,14 +250,17 @@ def validate_plan(plan: Dict[str, Any]) -> None:
         seen.add(identity)
 
     _validate_source(
-        plan.get("source"), require_inbox=action == "gmail_inbox_to_local"
+        plan.get("source"),
+        required_mailbox=(
+            "INBOX" if action == "gmail_inbox_to_local" else None
+        ),
     )
-    if action in ("gmail_inbox_to_local", "move_local"):
+    if action in DESTINATION_ACTIONS:
         _validate_destination(plan.get("destination"))
     elif "destination" in plan:
         raise PlanError("Read-state plan has an unexpected destination")
 
-    if action == "gmail_inbox_to_local" and plan["source"]["kind"] != "account":
+    if action in GMAIL_TRANSFER_ACTIONS and plan["source"]["kind"] != "account":
         raise PlanError("Gmail transfer source must be an account mailbox")
     if action == "move_local":
         if plan["source"]["kind"] != "local":

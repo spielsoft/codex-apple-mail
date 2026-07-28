@@ -19,7 +19,7 @@ from .oauth import TokenStore
 
 
 API_ROOT = "https://gmail.googleapis.com/gmail/v1/users/me"
-PERMITTED_LABEL = "INBOX"
+MUTABLE_SOURCE_LABELS = frozenset({"INBOX", "SPAM"})
 FORBIDDEN_LABEL = "TRASH"
 RECEIVED_AT_TOLERANCE = timedelta(hours=24)
 
@@ -84,9 +84,13 @@ class GmailClient:
         if not route_is_allowed:
             raise GmailError("Gmail API endpoint is not allowlisted")
         if method == "POST":
-            permitted_bodies = (
-                {"addLabelIds": [PERMITTED_LABEL], "removeLabelIds": []},
-                {"addLabelIds": [], "removeLabelIds": [PERMITTED_LABEL]},
+            permitted_bodies = tuple(
+                body
+                for label in MUTABLE_SOURCE_LABELS
+                for body in (
+                    {"addLabelIds": [label], "removeLabelIds": []},
+                    {"addLabelIds": [], "removeLabelIds": [label]},
+                )
             )
             if body not in permitted_bodies:
                 raise GmailError("Gmail label mutation is not allowlisted")
@@ -124,7 +128,11 @@ class GmailClient:
         response = self._request(
             "GET",
             "/messages",
-            query=(("q", query_value), ("maxResults", "10")),
+            query=(
+                ("q", query_value),
+                ("maxResults", "10"),
+                ("includeSpamTrash", "true"),
+            ),
         )
         return list(response.get("messages", []))
 
@@ -145,17 +153,34 @@ class GmailClient:
             (("format", "full"),),
         )
 
-    def modify_inbox_label(
-        self, gmail_message_id: str, *, add: bool = False, remove: bool = False
+    def modify_label(
+        self,
+        gmail_message_id: str,
+        label: str,
+        *,
+        add: bool = False,
+        remove: bool = False,
     ) -> Dict[str, Any]:
+        if label not in MUTABLE_SOURCE_LABELS:
+            raise GmailError("Gmail label mutation is not allowlisted")
         if add == remove:
             raise GmailError("Exactly one of add or remove must be true")
         body = {
-            "addLabelIds": [PERMITTED_LABEL] if add else [],
-            "removeLabelIds": [PERMITTED_LABEL] if remove else [],
+            "addLabelIds": [label] if add else [],
+            "removeLabelIds": [label] if remove else [],
         }
         return self._request(
             "POST", "/messages/{}/modify".format(gmail_message_id), body=body
+        )
+
+    def modify_inbox_label(
+        self, gmail_message_id: str, *, add: bool = False, remove: bool = False
+    ) -> Dict[str, Any]:
+        return self.modify_label(
+            gmail_message_id,
+            "INBOX",
+            add=add,
+            remove=remove,
         )
 
 
@@ -348,12 +373,19 @@ def get_message_records_parallel(
     return records
 
 
-def validate_archived_labels(message: Dict[str, Any]) -> None:
+def validate_removed_source_label(
+    message: Dict[str, Any],
+    source_label: str,
+) -> None:
+    if source_label not in MUTABLE_SOURCE_LABELS:
+        raise GmailError("Gmail source label is not allowlisted")
     raw_labels = message.get("labelIds")
     if not isinstance(raw_labels, list):
         raise GmailError("Gmail label-removal response omitted labels")
     labels = set(raw_labels)
-    if PERMITTED_LABEL in labels:
-        raise GmailError("INBOX label is still present")
+    if source_label in labels:
+        raise GmailError("{} label is still present".format(source_label))
+    if source_label == "SPAM" and "INBOX" in labels:
+        raise GmailError("INBOX label appeared after SPAM removal")
     if FORBIDDEN_LABEL in labels:
         raise GmailError("TRASH label appeared unexpectedly")

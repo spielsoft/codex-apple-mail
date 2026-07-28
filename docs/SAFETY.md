@@ -11,6 +11,12 @@ This document is authoritative.
 - Move messages between non-protected mailboxes.
 - Create local mailboxes.
 - For Gmail-backed Inbox transfers, copy locally and remove only `INBOX`.
+- For explicitly planned Gmail Spam/Junk transfers, copy locally, remove
+  `SPAM`, and remove `INBOX` only if Gmail adds it during the not-spam
+  transition.
+
+The Spam/Junk action remains a bounded, identity-selected transfer. It does
+not authorize a mailbox-wide empty command or permanent deletion.
 
 ## Prohibited
 
@@ -59,18 +65,21 @@ Later.
 ## Gmail transfer
 
 Gmail labels are not folders. A message may remain in `[Gmail]/All Mail` after
-leaving `INBOX`; that is expected.
+leaving `INBOX` or `SPAM`; that is expected.
 
 AppleScript does not reliably reproduce Mail's GUI cross-store move. The
 approved generic transaction is:
 
 1. bulk-copy the validated messages to the exact local destination;
 2. verify one copy of every message with preserved read state;
-3. resolve the same messages through Gmail;
-4. remove only `INBOX`;
+3. resolve the same messages through Gmail and require the action-specific
+   source label (`INBOX` or `SPAM`) on every message;
+4. remove only that source label; after `SPAM` removal, also remove `INBOX` if
+   Gmail adds it while marking the message not spam;
 5. if any Gmail mutation fails or returns an invalid response, read every
-   planned Gmail ID authoritatively and add `INBOX` back wherever removal is
-   observed or state is initially unavailable;
+   planned Gmail ID authoritatively and restore the complete pre-state:
+   `INBOX` for an Inbox plan, or `SPAM` present plus `INBOX` absent for a Spam
+   plan;
 6. request one Mail synchronization and return `pending_mail_sync`; perform
    one later bounded, audited reconciliation before beginning another
    sequential block.
@@ -82,10 +91,10 @@ request responses alone.
 
 The Gmail request layer allows only profile lookup, message search, bounded
 metadata/full-message reads, and a single-message modification whose sole
-changed label is `INBOX`. Gmail transfer and batch-read selections are capped
-at 50 messages, with at most 10 concurrent network requests and at most 10
-messages in each Mail transfer selector. It rejects other labels, server-side
-batch mutation, unsafe methods, and unsafe endpoints.
+changed label is `INBOX` or `SPAM`. Gmail transfer and batch-read selections
+are capped at 50 messages, with at most 10 concurrent network requests and at
+most 10 messages in each Mail transfer selector. It rejects every other label,
+server-side batch mutation, unsafe methods, and unsafe endpoints.
 
 The Gmail API response is authoritative server confirmation. If Mail still
 shows a corroborated source message after synchronization, the later
@@ -107,6 +116,9 @@ only complete identity matches.
 - Begin with `list`, which reads metadata only.
 - Use limits no larger than 250.
 - Use account-qualified mailboxes, not Mail's global unified Inbox.
+- Any exact account mailbox returned by discovery may be read, including
+  Junk/Spam, Important, Sent, Trash, and custom Gmail-label mailboxes. Reading
+  one does not authorize label mutation.
 - `get` requires both numeric and RFC IDs and bounds body output to 100,000
   characters.
 - OAuth-backed `get-batch` must validate all selected metadata and read states

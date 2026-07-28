@@ -8,14 +8,19 @@ from .gmail import (
     GmailClient,
     resolve_messages_parallel,
 )
-from .gmail_labels import remove_inbox_labels_with_rollback
+from .gmail_labels import remove_source_labels_with_rollback
 from .limits import (
     MAIL_TRANSPORT_CHUNK_SIZE,
     PUBLIC_GMAIL_BATCH_LIMIT,
     chunks,
 )
 from .mail import MailRunner
-from .plans import require_allowed_destination, validate_plan
+from .plans import (
+    GMAIL_TRANSFER_ACTIONS,
+    GMAIL_TRANSFER_SOURCE_LABELS,
+    require_allowed_destination,
+    validate_plan,
+)
 
 
 class OperationError(RuntimeError):
@@ -71,7 +76,7 @@ def verify_messages(
         raise OperationError("Mailbox creation plans have no messages to verify")
     messages = plan["messages"]
     if (
-        plan["action"] != "gmail_inbox_to_local"
+        plan["action"] not in GMAIL_TRANSFER_ACTIONS
         or len(messages) <= MAIL_TRANSPORT_CHUNK_SIZE
     ):
         return _verify_message_group(runner, plan, messages)
@@ -112,8 +117,8 @@ def probe_account_to_local_copy(
     runner: MailRunner, plan: Dict[str, Any]
 ) -> Dict[str, str]:
     validate_plan(plan)
-    if plan["action"] != "gmail_inbox_to_local":
-        raise OperationError("Plan is not a Gmail Inbox-to-local transfer")
+    if plan["action"] not in GMAIL_TRANSFER_ACTIONS:
+        raise OperationError("Plan is not a Gmail source-to-local transfer")
     if len(plan["messages"]) > PUBLIC_GMAIL_BATCH_LIMIT:
         raise OperationError(
             "Gmail transfer batch size cannot exceed {} messages".format(
@@ -450,7 +455,7 @@ def apply_create_mailbox(
     return result
 
 
-def apply_gmail_inbox_to_local(
+def _apply_gmail_source_to_local(
     runner: MailRunner,
     client: GmailClient,
     plan: Dict[str, Any],
@@ -462,8 +467,9 @@ def apply_gmail_inbox_to_local(
     transaction_started = perf_counter()
     phase_seconds: Dict[str, float] = {}
     require_allowed_destination(plan, allowed_destinations)
-    if plan["action"] != "gmail_inbox_to_local":
-        raise OperationError("Plan is not a Gmail Inbox-to-local transfer")
+    source_label = GMAIL_TRANSFER_SOURCE_LABELS.get(plan["action"])
+    if source_label is None:
+        raise OperationError("Plan is not a Gmail source-to-local transfer")
     if len(plan["messages"]) > PUBLIC_GMAIL_BATCH_LIMIT:
         raise OperationError(
             "Gmail transfer batch size cannot exceed {} messages".format(
@@ -483,8 +489,22 @@ def apply_gmail_inbox_to_local(
     phase_seconds["gmail_preflight"] = _elapsed(phase_started)
     for gmail_message in gmail_messages:
         labels = set(gmail_message.get("labelIds", []))
-        if "INBOX" not in labels or "TRASH" in labels:
-            raise OperationError("Gmail source labels do not match the required pre-state")
+        invalid_labels = (
+            source_label not in labels
+            or "TRASH" in labels
+            or (
+                source_label == "INBOX"
+                and "SPAM" in labels
+            )
+            or (
+                source_label == "SPAM"
+                and "INBOX" in labels
+            )
+        )
+        if invalid_labels:
+            raise OperationError(
+                "Gmail source labels do not match the required pre-state"
+            )
 
     _append_audit(
         audit_path,
@@ -535,7 +555,11 @@ def apply_gmail_inbox_to_local(
         return result
 
     phase_started = perf_counter()
-    changed_ids = remove_inbox_labels_with_rollback(client, gmail_messages)
+    changed_ids = remove_source_labels_with_rollback(
+        client,
+        gmail_messages,
+        source_label,
+    )
     phase_seconds["gmail_label_removal"] = _elapsed(phase_started)
 
     phase_started = perf_counter()
@@ -547,9 +571,54 @@ def apply_gmail_inbox_to_local(
         "action": plan["action"],
         "plan_hash": plan["plan_hash"],
         "message_count": len(plan["messages"]),
-        "gmail_inbox_labels_removed": len(changed_ids),
+        "gmail_source_labels_removed": len(changed_ids),
         **copy_summary,
         "phase_seconds": phase_seconds,
     }
+    result[
+        "gmail_{}_labels_removed".format(source_label.casefold())
+    ] = len(changed_ids)
     _append_audit(audit_path, result)
     return result
+
+
+def apply_gmail_inbox_to_local(
+    runner: MailRunner,
+    client: GmailClient,
+    plan: Dict[str, Any],
+    *,
+    expected_account: str,
+    allowed_destinations: Iterable[str],
+    audit_path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    if plan.get("action") != "gmail_inbox_to_local":
+        raise OperationError("Plan is not a Gmail Inbox-to-local transfer")
+    return _apply_gmail_source_to_local(
+        runner,
+        client,
+        plan,
+        expected_account=expected_account,
+        allowed_destinations=allowed_destinations,
+        audit_path=audit_path,
+    )
+
+
+def apply_gmail_spam_to_local(
+    runner: MailRunner,
+    client: GmailClient,
+    plan: Dict[str, Any],
+    *,
+    expected_account: str,
+    allowed_destinations: Iterable[str],
+    audit_path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    if plan.get("action") != "gmail_spam_to_local":
+        raise OperationError("Plan is not a Gmail Spam-to-local transfer")
+    return _apply_gmail_source_to_local(
+        runner,
+        client,
+        plan,
+        expected_account=expected_account,
+        allowed_destinations=allowed_destinations,
+        audit_path=audit_path,
+    )

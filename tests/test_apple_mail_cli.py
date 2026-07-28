@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "skills" / "apple-mail" / "scripts"))
 from apple_mail.cli import (
     command_apply,
     command_get_batch,
+    command_plan_spam_transfer,
     command_plan_transfer,
 )
 from apple_mail.gmail import GmailBodyUnavailable, GmailError
@@ -133,6 +134,26 @@ class AppleMailCliTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "cannot exceed 50"):
                 command_plan_transfer(args)
 
+    def test_junk_transfer_plan_preserves_exact_mailbox_name(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            selection = root / "selection.json"
+            output = root / "plan.json"
+            selection.write_text(json.dumps([message(1)]), encoding="utf-8")
+            args = argparse.Namespace(
+                account="person@example.com",
+                mailbox="Junk",
+                destination="On My Mac/Review",
+                selection=selection,
+                output=output,
+            )
+            with patch("apple_mail.cli._print_json"):
+                command_plan_spam_transfer(args)
+
+            plan = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(plan["action"], "gmail_spam_to_local")
+            self.assertEqual(plan["source"]["mailbox"], "Junk")
+
     def test_get_batch_uses_oauth_backend_without_calling_mail(self):
         with tempfile.TemporaryDirectory() as temporary:
             selection = Path(temporary) / "selection.json"
@@ -157,6 +178,31 @@ class AppleMailCliTests(unittest.TestCase):
             runner_class.assert_not_called()
             get_records.assert_called_once()
             self.assertEqual(get_records.call_args.kwargs["body_limit"], 50000)
+
+    def test_get_batch_oauth_backend_accepts_junk_mailbox_selection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            selection = Path(temporary) / "selection.json"
+            selection.write_text(json.dumps([message(1)]), encoding="utf-8")
+            args = self._args(selection)
+            args.mailbox = "Junk"
+            args.token = Path(temporary) / "token.json"
+            args.expected_account = "person@example.com"
+            with (
+                patch("apple_mail.cli.MailRunner") as runner_class,
+                patch("apple_mail.cli.GmailClient") as client_class,
+                patch(
+                    "apple_mail.cli.get_message_records_parallel",
+                    return_value=[{"TYPE": "MESSAGE"}],
+                ) as get_records,
+                patch("apple_mail.cli._print_json"),
+            ):
+                client_class.return_value.profile.return_value = {
+                    "emailAddress": "person@example.com"
+                }
+                command_get_batch(args)
+
+            runner_class.assert_not_called()
+            get_records.assert_called_once()
 
     def test_get_batch_falls_back_to_one_mail_batch_for_unavailable_gmail_body(self):
         with tempfile.TemporaryDirectory() as temporary:

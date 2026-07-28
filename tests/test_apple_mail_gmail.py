@@ -303,15 +303,30 @@ class AppleMailGmailTests(unittest.TestCase):
         self.assertEqual(tokens, ["unused"] * 10)
         self.assertEqual(store.calls, 1)
 
-    def test_only_inbox_label_can_change(self):
+    def test_only_inbox_and_spam_source_labels_can_change(self):
         client = RecordingClient()
         client.modify_inbox_label("abc123", remove=True)
         self.assertEqual(
             client.calls[-1][3],
             {"addLabelIds": [], "removeLabelIds": ["INBOX"]},
         )
+        client.modify_label("abc123", "SPAM", remove=True)
+        self.assertEqual(
+            client.calls[-1][3],
+            {"addLabelIds": [], "removeLabelIds": ["SPAM"]},
+        )
         with self.assertRaises(GmailError):
             client.modify_inbox_label("abc123", add=True, remove=True)
+        with self.assertRaises(GmailError):
+            client.modify_label("abc123", "IMPORTANT", remove=True)
+
+    def test_rfc_message_id_search_includes_spam_and_trash(self):
+        client = RecordingClient()
+
+        client.list_by_rfc_message_id("stable@example.com")
+
+        query = client.calls[-1][2]
+        self.assertIn(("includeSpamTrash", "true"), query)
 
     def test_unsafe_routes_are_rejected(self):
         client = GmailClient(DummyTokenStore())

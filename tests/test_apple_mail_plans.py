@@ -46,6 +46,17 @@ class AppleMailPlanTests(unittest.TestCase):
         with self.assertRaises(PlanError):
             require_allowed_destination(plan, ["On My Mac/Other"])
 
+    def test_gmail_spam_plan_accepts_exact_account_mailbox(self):
+        plan = build_message_plan(
+            "gmail_spam_to_local",
+            account_source("person@example.com", "Junk"),
+            [MESSAGE],
+            destination=local_destination("On My Mac/Review"),
+        )
+
+        validate_plan(plan)
+        self.assertEqual(plan["source"]["mailbox"], "Junk")
+
     def test_tampering_breaks_hash(self):
         plan = build_message_plan(
             "move_local",

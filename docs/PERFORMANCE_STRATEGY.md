@@ -25,7 +25,7 @@ per-token file lock serializes refresh across processes.
 
 ## Transaction shape
 
-For Gmail Inbox-to-local:
+For Gmail Inbox- or Spam-to-local:
 
 1. Resolve the account, source, and destination once.
 2. Resolve and validate each ordered internal Mail chunk from one complete
@@ -39,10 +39,11 @@ For Gmail Inbox-to-local:
    asynchronously, take snapshots after fixed 1.5 and 4.8 second delays,
    stopping after the first complete snapshot. Treat the final result as the
    local-copy barrier; never poll beyond the same 6.3-second wait bound.
-5. Remove only Gmail `INBOX` with bounded concurrent per-message responses.
-   Wait for every response; on any failure, authoritatively read every planned
-   Gmail ID, restore `INBOX` wherever removal is observed or initial state is
-   unavailable, then read every ID again before reporting rollback or an
+5. Remove only the action-specific Gmail source label with bounded concurrent
+   per-message responses. Spam removal also clears `INBOX` if Gmail adds it
+   during the not-spam transition. Wait for every response; on any failure,
+   authoritatively read every planned Gmail ID, restore the complete Inbox or
+   Spam pre-state, then read every ID again before reporting rollback or an
    unknown mutation state.
 6. Request one Mail synchronization.
 7. Return `pending_mail_sync` without immediately querying the cache that was
@@ -65,15 +66,18 @@ once, corroborate its returned messages in memory, and normalize the combined
 bulk count across the full plan. Retain the per-ID verifier only as the larger
 general-operation fallback.
 
-For Gmail Inbox body retrieval, `get-batch --token --expected-account` performs
-two concurrent phases: first resolve and corroborate every selected identity
-and read state, then fetch full bodies. The phase boundary prevents a bad
-selection from causing any body retrieval. The serial AppleScript backend
-remains available when no token is supplied. If the full Gmail payload exposes
-a selected text body only through an attachment identifier, the client does
-not issue a prohibited attachment-content request. Only that explicit
-body-unavailable result falls back to one bounded AppleScript batch after the
-Gmail identity barrier; unrelated Gmail errors propagate.
+For Gmail body retrieval from any exact account mailbox,
+`get-batch --token --expected-account` performs two concurrent phases: first
+resolve and corroborate every selected identity and read state, then fetch full
+bodies. The phase boundary prevents a bad selection from causing any body
+retrieval. The serial AppleScript backend remains available when no token is
+supplied. If the full Gmail payload exposes a selected text body only through
+an attachment identifier, the client does not issue a prohibited
+attachment-content request. Only that explicit body-unavailable result falls
+back to one bounded AppleScript batch after the Gmail identity barrier;
+unrelated Gmail errors propagate. RFC Message-ID search includes Spam and
+Trash, but the recent Apple Mail selection remains the identity and mailbox
+boundary.
 
 ## Live validation gate
 

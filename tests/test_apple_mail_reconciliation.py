@@ -116,6 +116,21 @@ class AppleMailReconciliationTests(unittest.TestCase):
         self.assertEqual(records[-1]["status"], "complete")
         self.assertEqual(records[-1]["plan_hash"], self.plan["plan_hash"])
 
+    def test_complete_classification_supports_spam_transfer_plan(self):
+        self.plan = build_message_plan(
+            "gmail_spam_to_local",
+            account_source("person@example.com", "Junk"),
+            self.messages,
+            destination=local_destination("On My Mac/Review"),
+        )
+
+        result, records = self._reconcile(
+            self._rows(("absent", "absent"))
+        )
+
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(records[-1]["action"], "gmail_spam_to_local")
+
     def test_exact_sources_remaining_are_pending_mail_sync(self):
         result, records = self._reconcile(
             self._rows(("present", "present"))

@@ -4,14 +4,15 @@
 
 Gmail authorization is optional. Apple Mail discovery, listing, reading, local
 mailbox creation, local moves, and read-state changes do not need Google
-credentials. Gmail Inbox-to-local transfers use this flow. A Gmail Inbox
-`get-batch` can also use the same token as an optional faster read backend.
+credentials. Gmail Inbox- and Spam-to-local transfers use this flow.
+`get-batch` can also use the same token as an optional faster read backend for
+recent selections from any exact account mailbox.
 
 The Gmail API is used only for bounded message lookup/body retrieval and adding
-or removing `INBOX` after a local copy is verified. `gmail.modify` already
-includes the read access needed by the optional batch-read path, so it does
-not request another scope. The desktop OAuth flow prints a URL and waits on
-localhost; it does not control a browser.
+or removing the allowlisted `INBOX` and `SPAM` source labels after a local copy
+is verified. `gmail.modify` already includes the read access needed by the
+optional batch-read path, so it does not request another scope. The desktop
+OAuth flow prints a URL and waits on localhost; it does not control a browser.
 
 ## Setup
 
@@ -55,7 +56,7 @@ For an already-authorized account, the read-only fast path is:
 
 ```sh
 scripts/apple-mail get-batch \
-  --account "person@example.com" --mailbox INBOX \
+  --account "person@example.com" --mailbox "Junk" \
   --selection /private/path/selection.json \
   --body-limit 50000 \
   --token /private/path/gmail-token.json \
@@ -64,8 +65,11 @@ scripts/apple-mail get-batch \
 
 It performs a complete bounded metadata and read-state corroboration before
 retrieving any body. It does not change labels, read state, or Mail. Gmail
-sometimes represents a large text body with an attachment identifier rather
-than inline data. The API client never follows that identifier because
+RFC Message-ID lookup includes Spam and Trash so the same read path works for
+recent selections from Junk/Spam, Important, Sent, custom-label, and other
+account mailboxes. Gmail sometimes represents a large text body with an
+attachment identifier rather than inline data. The API client never follows
+that identifier because
 attachment-content reads are prohibited. In that specific case, after Gmail
 identity validation has succeeded, `get-batch` uses its bounded Apple Mail
 backend for the selected batch. Authentication, network, and identity failures
@@ -81,5 +85,8 @@ policy.
 Official references:
 
 - [Gmail API OAuth scopes](https://developers.google.com/workspace/gmail/api/auth/scopes)
+- [Gmail message listing](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list)
+- [Gmail message modification](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/modify)
+- [Gmail system and user labels](https://developers.google.com/workspace/gmail/api/guides/labels)
 - [OAuth for desktop apps](https://developers.google.com/identity/protocols/oauth2/native-app)
 - [Workspace app-access controls](https://support.google.com/a/answer/7281227)

@@ -5,7 +5,7 @@ transparent background scripts—without Computer Control.
 
 Capabilities include mailbox discovery, bounded message reading with flag
 colors, read/unread changes, local mailbox creation, local-to-local moves, and
-verified Gmail Inbox-to-local transfers.
+verified Gmail Inbox- and Spam/Junk-to-local transfers.
 
 The plugin manifest is [.codex-plugin/plugin.json](.codex-plugin/plugin.json)
 and the bundled skill is [skills/apple-mail/SKILL.md](skills/apple-mail/SKILL.md).
@@ -20,7 +20,8 @@ directory name and the manifest `name` synchronized. Use the bundled skill's
 
 Apple Mail discovery, listing, reading, local mailbox creation, local moves,
 and read-state changes do not require Google authentication. Gmail OAuth is
-needed for a Gmail Inbox-to-local transfer and can optionally accelerate
-bounded Gmail Inbox body reads. See [docs/OAUTH.md](docs/OAUTH.md) for the
+needed for a Gmail Inbox- or Spam-to-local transfer and can optionally
+accelerate bounded Gmail body reads from any exact account mailbox. See
+[docs/OAUTH.md](docs/OAUTH.md) for the
 optional setup and [docs/PUBLISHING.md](docs/PUBLISHING.md) before pushing this
 repository to GitHub.

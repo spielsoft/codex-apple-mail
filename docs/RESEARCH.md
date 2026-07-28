@@ -14,8 +14,14 @@
   the message in All Mail.
 - AppleScript cross-store moves can copy locally without reliably removing
   Gmail `INBOX`, while the GUI behaves differently.
-- Gmail API `users.messages.modify` limited to `INBOX` is narrower and more
-  auditable than IMAP deletion semantics.
+- Gmail message search supports exact Gmail query syntax and label IDs, and
+  `includeSpamTrash` makes recent Spam/Trash selections resolvable.
+- Gmail permits `SPAM` to be applied and removed, while `SENT` cannot be
+  manually applied or removed. The plugin therefore permits explicit
+  `INBOX` and `SPAM` source-label transactions but keeps Sent, Important,
+  custom labels, Trash, and arbitrary filters read-only.
+- Gmail API `users.messages.modify` constrained to the two allowlisted source
+  labels is narrower and more auditable than IMAP deletion semantics.
 
 ## Rejected approaches
 
@@ -34,6 +40,8 @@
 
 - [Apple scripting dictionary guidance](https://developer.apple.com/library/archive/documentation/LanguagesUtilities/Conceptual/MacAutomationScriptingGuide/NavigateaScriptingDictionary.html)
 - [Gmail API message modification](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/modify)
+- [Gmail API message listing](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list)
+- [Gmail label types](https://developers.google.com/workspace/gmail/api/guides/labels)
 - [Gmail archive behavior](https://support.google.com/mail/answer/6576)
 - [MsgFiler AppleScript filing analysis](https://msgfiler.wordpress.com/2024/02/12/a-deep-dive-into-filing-mail-messages-using-applescript/)
 - [sweetrb/apple-mail-mcp bulk implementation](https://github.com/sweetrb/apple-mail-mcp)

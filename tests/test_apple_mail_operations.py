@@ -13,6 +13,7 @@ from apple_mail.operations import (
     OperationError,
     apply_create_mailbox,
     apply_gmail_inbox_to_local,
+    apply_gmail_spam_to_local,
     apply_local_move,
     apply_set_read,
     probe_account_to_local_copy,
@@ -21,6 +22,7 @@ from apple_mail.operations import (
 from apple_mail.gmail_labels import (
     GmailMutationStateUnknown,
     remove_inbox_labels_with_rollback,
+    remove_spam_labels_with_rollback,
 )
 from apple_mail.plans import (
     account_source,
@@ -356,6 +358,82 @@ class AppleMailOperationTests(unittest.TestCase):
         )
         self.assertEqual(copy_call[1][0], "apply")
 
+    def test_gmail_spam_transfer_cleans_up_automatic_inbox_label(self):
+        plan = build_message_plan(
+            "gmail_spam_to_local",
+            account_source("person@example.com", "Junk"),
+            [MESSAGE],
+            destination=local_destination("On My Mac/Review"),
+        )
+        runner = SequencedRunner(
+            script_results={
+                "copy_account_to_local.applescript": copy_barrier()
+            },
+        )
+
+        class SpamClient:
+            def __init__(self):
+                self.labels = {"SPAM", "IMPORTANT"}
+                self.modifications = []
+
+            def profile(self):
+                return {"emailAddress": "person@example.com"}
+
+            def list_by_rfc_message_id(self, message_id):
+                return [{"id": "gmail-1"}]
+
+            def get_metadata(self, gmail_id):
+                return {
+                    "id": gmail_id,
+                    "labelIds": sorted(self.labels),
+                    "payload": {
+                        "headers": [
+                            {
+                                "name": "Message-ID",
+                                "value": "<stable-id@example.com>",
+                            },
+                            {"name": "Subject", "value": "Example"},
+                            {
+                                "name": "From",
+                                "value": "Sender <sender@example.com>",
+                            },
+                        ]
+                    },
+                }
+
+            def modify_label(
+                self, gmail_id, label, *, add=False, remove=False
+            ):
+                self.modifications.append((gmail_id, label, add, remove))
+                if add:
+                    self.labels.add(label)
+                else:
+                    self.labels.discard(label)
+                    if label == "SPAM":
+                        self.labels.add("INBOX")
+                return {"id": gmail_id, "labelIds": sorted(self.labels)}
+
+        client = SpamClient()
+        result = apply_gmail_spam_to_local(
+            runner,
+            client,
+            plan,
+            expected_account="person@example.com",
+            allowed_destinations=["On My Mac/Review"],
+        )
+
+        self.assertEqual(result["status"], "pending_mail_sync")
+        self.assertEqual(result["gmail_spam_labels_removed"], 1)
+        self.assertEqual(result["gmail_source_labels_removed"], 1)
+        self.assertEqual(client.labels, {"IMPORTANT"})
+        self.assertEqual(
+            client.modifications,
+            [
+                ("gmail-1", "SPAM", False, True),
+                ("gmail-1", "INBOX", False, True),
+            ],
+        )
+
     def test_gmail_label_change_happens_only_after_copy_barrier_returns(self):
         barrier_state = {"returned": False}
 
@@ -621,7 +699,7 @@ class AppleMailOperationTests(unittest.TestCase):
                 return_value=resolved,
             ),
             patch(
-                "apple_mail.operations.remove_inbox_labels_with_rollback"
+                "apple_mail.operations.remove_source_labels_with_rollback"
             ) as remove_labels,
         ):
             result = apply_gmail_inbox_to_local(
@@ -789,6 +867,42 @@ class AppleMailOperationTests(unittest.TestCase):
             sorted(client.metadata_calls),
             sorted(["gmail-1", "gmail-2", "gmail-3"] * 2),
         )
+
+    def test_lost_spam_cleanup_response_restores_spam_without_inbox(self):
+        class LostSpamResponseClient:
+            def __init__(self):
+                self.labels = {"SPAM", "IMPORTANT"}
+                self.calls = []
+
+            def modify_label(
+                self, gmail_id, label, *, add=False, remove=False
+            ):
+                self.calls.append((gmail_id, label, add, remove))
+                if add:
+                    self.labels.add(label)
+                else:
+                    self.labels.discard(label)
+                    if label == "SPAM":
+                        self.labels.add("INBOX")
+                if label == "INBOX" and remove and len(self.calls) == 2:
+                    raise RuntimeError("response lost after cleanup")
+                return {"id": gmail_id, "labelIds": sorted(self.labels)}
+
+            def get_metadata(self, gmail_id):
+                return {"id": gmail_id, "labelIds": sorted(self.labels)}
+
+        client = LostSpamResponseClient()
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "response lost after cleanup",
+        ):
+            remove_spam_labels_with_rollback(
+                client,
+                [{"id": "gmail-1"}],
+            )
+
+        self.assertIn("SPAM", client.labels)
+        self.assertNotIn("INBOX", client.labels)
 
     def test_unreadable_reconciliation_surfaces_unknown_mutation_state(self):
         class UnreadableClient:
