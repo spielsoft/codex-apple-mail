@@ -73,6 +73,17 @@ on textMatches(leftValue, rightValue)
 	return true
 end textMatches
 
+on indexedMessages(sourceMailbox, expectedMailID)
+	tell application "Mail"
+		try
+			return messages of sourceMailbox whose id is expectedMailID
+		on error errorMessage number errorNumber
+			if errorNumber is -1719 then return {}
+			error errorMessage number errorNumber
+		end try
+	end tell
+end indexedMessages
+
 on run argv
 	if (count of argv) < 10 then error "Insufficient arguments"
 	if ((count of argv) - 4) mod 6 is not 0 then error "Message arguments must be groups of six"
@@ -99,7 +110,7 @@ on run argv
 			set expectedSender to item (argumentOffset + 3) of argv
 			set datePrefix to item (argumentOffset + 4) of argv
 			set expectedRead to item (argumentOffset + 5) of argv
-			set sourceMatches to messages of sourceMailbox whose id is expectedMailID
+			set sourceMatches to my indexedMessages(sourceMailbox, expectedMailID)
 			if (count of sourceMatches) is not 1 then error "Expected one indexed source match"
 			set sourceMessage to item 1 of sourceMatches
 			if not my textMatches(my normalizedMessageID(«class meid» of sourceMessage), expectedMessageID) then error "Indexed source identity check failed"

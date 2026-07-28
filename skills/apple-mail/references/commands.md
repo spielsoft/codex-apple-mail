@@ -122,6 +122,8 @@ Gmail execution additionally requires `--token` and `--expected-account`.
 Verification reports separate source match Booleans for Message-ID, subject,
 sender, and received time. A failed mutation preflight names only the plan item
 positions and mismatched field names; it does not print message content.
+Post-Gmail verification treats Mail error `-1719` from a disappearing indexed
+Inbox lookup as zero source matches; every other Mail error still propagates.
 `probe-copy` is valid only for a Gmail Inbox-to-local plan. It executes the
 copy AppleScript's source/destination resolution, identity, candidate, padding,
 and selector-count path, returns aggregate counts, and exits before

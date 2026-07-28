@@ -55,6 +55,17 @@ on normalizedMessageID(theText)
 	return normalized
 end normalizedMessageID
 
+on indexedMessages(sourceMailbox, expectedMailID)
+	tell application "Mail"
+		try
+			return messages of sourceMailbox whose id is expectedMailID
+		on error errorMessage number errorNumber
+			if errorNumber is -1719 then return {}
+			error errorMessage number errorNumber
+		end try
+	end tell
+end indexedMessages
+
 on run argv
 	if (count of argv) is not 6 then error "Expected source, identity, and body limit"
 	set sourceMailbox to my resolveSource(item 1 of argv, item 2 of argv, item 3 of argv)
@@ -63,7 +74,7 @@ on run argv
 	set bodyLimit to item 6 of argv as integer
 	if bodyLimit < 0 or bodyLimit > 100000 then error "Body limit is outside the supported range"
 	tell application "Mail"
-		set sourceMatches to messages of sourceMailbox whose id is expectedMailID
+		set sourceMatches to my indexedMessages(sourceMailbox, expectedMailID)
 		if (count of sourceMatches) is not 1 then error "Expected one indexed source match"
 		set targetMessage to item 1 of sourceMatches
 		if my normalizedMessageID(«class meid» of targetMessage) is not expectedMessageID then error "Indexed source identity check failed"

@@ -19,6 +19,10 @@ MUTATION_SCRIPTS = (
 BATCH_SCRIPTS = MUTATION_SCRIPTS[:3] + (
     APPLESCRIPTS / "verify_messages.applescript",
 )
+INDEXED_MESSAGE_SCRIPTS = MUTATION_SCRIPTS[:3] + (
+    APPLESCRIPTS / "get_message.applescript",
+    APPLESCRIPTS / "verify_messages.applescript",
+)
 
 
 class AppleMailSafetyTests(unittest.TestCase):
@@ -37,6 +41,27 @@ class AppleMailSafetyTests(unittest.TestCase):
                 "{} uses Mail's offset term as a loop variable".format(
                     script.name
                 ),
+            )
+
+    def test_missing_index_error_is_normalized_only_at_indexed_lookup(self):
+        for script in INDEXED_MESSAGE_SCRIPTS:
+            source = script.read_text(encoding="utf-8")
+            self.assertIn(
+                "on indexedMessages(sourceMailbox, expectedMailID)", source
+            )
+            self.assertIn(
+                "if errorNumber is -1719 then return {}", source
+            )
+            self.assertIn("error errorMessage number errorNumber", source)
+            self.assertIn(
+                "set sourceMatches to my indexedMessages("
+                "sourceMailbox, expectedMailID)",
+                source,
+            )
+            self.assertNotIn(
+                "set sourceMatches to messages of sourceMailbox whose id is "
+                "expectedMailID",
+                source,
             )
 
     def test_bulk_copy_and_move_use_direct_mail_specifiers(self):

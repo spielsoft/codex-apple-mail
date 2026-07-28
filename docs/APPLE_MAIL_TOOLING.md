@@ -120,7 +120,9 @@ Verification reports separate source match Booleans for Message-ID, subject,
 sender, and received time. It also reports `SOURCE_BULK_COUNT`, which must equal
 the plan batch size before a bulk copy or move can run. A failed mutation
 preflight identifies only plan item positions and mismatched field names; it
-never includes message content.
+never includes message content. During post-Gmail verification, Mail error
+`-1719` from an indexed source lookup is treated as the expected zero-result
+state; all other Mail errors remain failures.
 
 ## OAuth
 

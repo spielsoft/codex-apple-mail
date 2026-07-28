@@ -60,6 +60,11 @@ the complete destination, removes only Gmail `INBOX`, requests one Mail
 synchronization, and performs one final indexed check. Partial Gmail mutation
 rolls back by adding `INBOX`.
 
+After `INBOX` removal, Mail can raise error `-1719` while an indexed source
+filter is disappearing instead of returning an empty collection. The indexed
+lookup boundary normalizes only that error to zero matches; other Mail errors
+still propagate. Pre-mutation callers continue to reject zero matches.
+
 Display lag returns `pending_mail_sync`; the tool does not poll continuously.
 
 ## Layout
