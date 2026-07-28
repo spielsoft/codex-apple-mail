@@ -34,7 +34,9 @@ Every message plan carries:
 - subject, sender, received date, and read-state corroborators.
 
 A batch binds by numeric ID, validates all corroborators, then submits one
-message-reference list to Mail's bulk `duplicate` or `move` command. It never
+numeric-ID-filtered Mail object specifier to the bulk `duplicate` or `move`
+command. A materialized AppleScript list is not a Mail object specifier and
+must not be used as the command's direct parameter. The implementation never
 scans a large source once per RFC Message-ID.
 
 ## Plan actions

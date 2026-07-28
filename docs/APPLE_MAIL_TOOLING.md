@@ -110,8 +110,10 @@ path. Destination-bearing plans require an exact allowlist on both dry run and
 execution. `set_read` has no destination allowlist.
 
 Verification reports separate source match Booleans for Message-ID, subject,
-sender, and received time. A failed mutation preflight identifies only plan
-item positions and mismatched field names; it never includes message content.
+sender, and received time. It also reports `SOURCE_BULK_COUNT`, which must equal
+the plan batch size before a bulk copy or move can run. A failed mutation
+preflight identifies only plan item positions and mismatched field names; it
+never includes message content.
 
 ## OAuth
 

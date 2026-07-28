@@ -64,6 +64,11 @@ def _source_mismatches(
 ) -> List[str]:
     if len(rows) != len(messages):
         return ["result_count"]
+    expected_bulk_count = str(len(messages))
+    if any(
+        row.get("SOURCE_BULK_COUNT") != expected_bulk_count for row in rows
+    ):
+        return ["bulk_selector_count"]
     expected = {str(item["mail_id"]): item for item in messages}
     positions = {
         str(item["mail_id"]): index

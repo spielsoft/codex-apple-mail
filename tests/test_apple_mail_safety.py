@@ -39,6 +39,30 @@ class AppleMailSafetyTests(unittest.TestCase):
                 ),
             )
 
+    def test_bulk_copy_and_move_use_direct_mail_specifiers(self):
+        copy_source = MUTATION_SCRIPTS[0].read_text(encoding="utf-8")
+        move_source = MUTATION_SCRIPTS[1].read_text(encoding="utf-8")
+        verify_source = (
+            APPLESCRIPTS / "verify_messages.applescript"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "duplicate (messages of sourceMailbox whose id is selectorMailID001",
+            copy_source,
+        )
+        self.assertIn(
+            "move (messages of sourceMailbox whose id is selectorMailID001",
+            move_source,
+        )
+        self.assertNotIn("duplicate messagesToCopy", copy_source)
+        self.assertNotIn("move messagesToMove", move_source)
+        for source in (copy_source, move_source, verify_source):
+            self.assertNotIn("whose id is in", source)
+            self.assertIn("selectorMailID250", source)
+            self.assertIn(
+                "repeat while (count of selectorMailIDs) < 250", source
+            )
+        self.assertIn("SOURCE_BULK_COUNT", verify_source)
+
     def test_identity_checks_coerce_mail_sender_to_text(self):
         for script in MUTATION_SCRIPTS[:3] + (
             APPLESCRIPTS / "verify_messages.applescript",

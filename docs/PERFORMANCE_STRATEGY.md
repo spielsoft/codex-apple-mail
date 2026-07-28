@@ -18,7 +18,8 @@ For Gmail Inbox-to-local:
 
 1. Resolve the account, source, and destination once.
 2. Bind and validate every source by numeric ID.
-3. Submit one bulk `duplicate` list.
+3. Submit one bulk `duplicate` command using a direct numeric-ID-filtered Mail
+   object specifier.
 4. Traverse the local destination once and verify the complete set.
 5. Remove only Gmail `INBOX` with per-message responses and rollback.
 6. Request one Mail synchronization.

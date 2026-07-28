@@ -42,6 +42,7 @@ def verification(source_count="1", source_read="false", destination_count="0"):
             "MAIL_ID": "123",
             "MESSAGE_ID": "stable-id@example.com",
             "SOURCE_ID_COUNT": source_count,
+            "SOURCE_BULK_COUNT": "1" if source_count == "1" else "0",
             "SOURCE_IDENTITY": source_matches,
             "SOURCE_MESSAGE_ID_MATCH": source_matches,
             "SOURCE_SUBJECT_MATCH": source_matches,
@@ -174,6 +175,28 @@ class AppleMailOperationTests(unittest.TestCase):
         self.assertNotIn(MESSAGE["subject"], str(raised.exception))
         self.assertNotIn(MESSAGE["sender"], str(raised.exception))
         self.assertNotIn(MESSAGE["message_id"], str(raised.exception))
+
+    def test_bulk_selector_count_mismatch_stops_before_mutation(self):
+        plan = build_message_plan(
+            "move_local",
+            local_source("On My Mac/One"),
+            [MESSAGE],
+            destination=local_destination("On My Mac/Two"),
+        )
+        mismatch = verification()
+        mismatch[0]["SOURCE_BULK_COUNT"] = "0"
+        runner = SequencedRunner([mismatch])
+        with self.assertRaisesRegex(
+            OperationError,
+            r"Local source preflight failed: bulk_selector_count",
+        ):
+            apply_local_move(
+                runner, plan, allowed_destinations=["On My Mac/Two"]
+            )
+        self.assertNotIn(
+            "move_local_messages.applescript",
+            [call[0] for call in runner.calls],
+        )
 
     def test_local_move_is_one_bulk_call_with_batch_verification(self):
         plan = build_message_plan(
