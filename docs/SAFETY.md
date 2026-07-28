@@ -46,8 +46,10 @@ Every mutation must:
 8. use one bulk Mail command for a batch, not a process per message;
 9. verify the local copy barrier before Gmail mutation, request one Mail
    synchronization afterward, and report the cache state as pending until one
-   later bounded verification rather than querying or polling immediately; and
-10. append a start and outcome event to a private audit log.
+   later bounded reconciliation rather than querying or polling immediately;
+   and
+10. append a start and outcome event to a private audit log; a later
+    reconciliation appends the terminal Gmail transfer outcome.
 
 Local move source and destination must differ. Protected destination leaf
 names include Trash, Deleted Messages, Junk, Outbox, Drafts, Sent, and Send
@@ -65,9 +67,17 @@ approved generic transaction is:
 2. verify one copy of every message with preserved read state;
 3. resolve the same messages through Gmail;
 4. remove only `INBOX`;
-5. add `INBOX` back if a later Gmail mutation in the batch fails;
+5. if any Gmail mutation fails or returns an invalid response, read every
+   planned Gmail ID authoritatively and add `INBOX` back wherever removal is
+   observed or state is initially unavailable;
 6. request one Mail synchronization and return `pending_mail_sync`; perform
-   one later bounded verification before beginning another sequential block.
+   one later bounded, audited reconciliation before beginning another
+   sequential block.
+
+Rollback is confirmed by one final authoritative read of every planned Gmail
+ID. If those reads cannot establish the final label state, the audit outcome is
+`mutation_state_unknown`; the tool never reports a successful rollback from
+request responses alone.
 
 The Gmail request layer allows only profile lookup, message search, bounded
 metadata/full-message reads, and a single-message modification whose sole
@@ -76,9 +86,19 @@ ten-message transfer/read limit. It rejects other labels, server-side batch
 mutation, unsafe methods, and unsafe endpoints.
 
 The Gmail API response is authoritative server confirmation. If Mail still
-shows a corroborated source message after synchronization, the later `verify`
-continues to report it. If a numeric ID resolves to different metadata, fail
-closed.
+shows a corroborated source message after synchronization, the later
+`reconcile` continues to report the transfer as pending. If a numeric ID
+resolves to different metadata, fail closed.
+
+Use `reconcile`, not a repeated mutation, to close a pending Gmail transfer.
+It is read-only and requires no OAuth. It records `complete` only when every
+planned destination copy is exact and read-preserved and every source is
+absent. It retains `pending_mail_sync` while all source rows are either exact
+or absent and at least one exact source remains during cache convergence.
+Invalid, unreadable, ambiguous, or numeric-ID-reuse evidence is recorded as
+`mutation_state_unknown`. `DESTINATION_COUNT=1` already represents full
+identity corroboration: the verifier rejects Message-ID collisions and counts
+only complete identity matches.
 
 ## Inventory and content
 

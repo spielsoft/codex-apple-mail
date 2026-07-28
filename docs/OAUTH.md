@@ -41,6 +41,12 @@ scripts/apple-mail authorize \
 The command binds to `127.0.0.1`, validates OAuth state, uses PKCE, requests
 only `gmail.modify`, writes mode `0600`, and refuses to overwrite a token.
 Keep the token path private and do not commit either input or output file.
+Token refreshes are serialized across processes by a mode-`0600` sibling lock
+file. After acquiring that lock, each process reloads the token so a refresh
+completed by another process is reused. A required refresh is fsynced to a
+unique mode-`0600` file in the token directory and atomically replaces the
+prior token; failures before that atomic replacement leave the prior token
+intact and remove the temporary file.
 
 Every Gmail transfer compares the authenticated profile, expected account
 argument, and account embedded in the hashed plan.
@@ -57,7 +63,13 @@ scripts/apple-mail get-batch \
 ```
 
 It performs a complete bounded metadata and read-state corroboration before
-retrieving any body. It does not change labels, read state, or Mail.
+retrieving any body. It does not change labels, read state, or Mail. Gmail
+sometimes represents a large text body with an attachment identifier rather
+than inline data. The API client never follows that identifier because
+attachment-content reads are prohibited. In that specific case, after Gmail
+identity validation has succeeded, `get-batch` uses its bounded Apple Mail
+backend for the selected batch. Authentication, network, and identity failures
+still fail closed instead of falling back.
 
 Never store credentials or tokens in this plugin repository.
 

@@ -36,8 +36,9 @@ For Gmail Inbox-to-local:
    before returning the error.
 6. Request one Mail synchronization.
 7. Return `pending_mail_sync` without immediately querying the cache that was
-   just asked to synchronize. A later bounded `verify` establishes Mail's
-   display state before another sequential block begins.
+   just asked to synchronize. A later bounded `reconcile` establishes and
+   audits Mail's aggregate transfer state before another sequential block
+   begins.
 
 For local-to-local filing, use the same binding stage followed by one bulk
 `move`.
@@ -57,7 +58,11 @@ For Gmail Inbox body retrieval, `get-batch --token --expected-account` performs
 two concurrent phases: first resolve and corroborate every selected identity
 and read state, then fetch full bodies. The phase boundary prevents a bad
 selection from causing any body retrieval. The serial AppleScript backend
-remains available when no token is supplied.
+remains available when no token is supplied. If the full Gmail payload exposes
+a selected text body only through an attachment identifier, the client does
+not issue a prohibited attachment-content request. Only that explicit
+body-unavailable result falls back to one bounded AppleScript batch after the
+Gmail identity barrier; unrelated Gmail errors propagate.
 
 ## Live validation gate
 

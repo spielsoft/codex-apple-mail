@@ -61,10 +61,21 @@ source from that result, bulk-copies missing local messages, and verifies the
 complete destination. The transaction then removes only Gmail `INBOX` and
 requests one Mail synchronization. It returns `pending_mail_sync` rather than
 immediately querying the cache that it just asked to synchronize; one later
-bounded verification gates the next sequential block. Partial Gmail mutation
-rolls back by adding `INBOX`. Gmail lookup and label requests may run
-concurrently within the fixed ten-message bound, but each label change still
-requires its own confirmed response. Mail Apple Events remain serial.
+bounded, audited reconciliation gates the next sequential block.
+Reconciliation owns the terminal state transition: it appends `complete` only
+for exact local copies with preserved read state and absent sources, retains
+`pending_mail_sync` while any exact source remains during cache convergence,
+and records `mutation_state_unknown` for invalid, unreadable, ambiguous, or
+numeric-ID-reuse evidence. `DESTINATION_COUNT=1` already represents a full
+identity match because the verifier rejects Message-ID collisions and counts
+only messages whose complete corroborating identity matches. Partial Gmail
+mutation rolls back by authoritatively reading every planned Gmail ID, adding
+`INBOX` where removal is observed or the initial state cannot be read, and
+reading the complete batch again. An unreadable final label state is audited
+as `mutation_state_unknown`, never as a confirmed rollback. Gmail lookup and
+label requests may run concurrently within the fixed ten-message bound, but
+each label change still requires its own confirmed outcome. Mail Apple Events
+remain serial.
 
 After `INBOX` removal, Mail can raise error `-1719` while an indexed source
 filter is disappearing instead of returning an empty collection. The indexed
@@ -72,7 +83,9 @@ lookup boundary normalizes only that error to zero matches; other Mail errors
 still propagate. Pre-mutation callers continue to reject zero matches.
 
 Display lag returns `pending_mail_sync`; the tool neither polls continuously
-nor performs a predictably premature immediate cache check.
+nor performs a predictably premature immediate cache check. The reconciliation
+command is read-only, does not require OAuth, and emits only aggregate state
+plus generic reason codes to its append-only audit.
 
 ## Layout
 

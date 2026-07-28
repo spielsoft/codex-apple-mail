@@ -11,10 +11,12 @@ sys.path.insert(
 )
 
 from apple_mail.gmail import (
+    GmailBodyUnavailable,
     GmailClient,
     GmailError,
     get_message_records_parallel,
 )
+from apple_mail.gmail_content import attachment_count, message_body
 
 
 class DummyTokenStore:
@@ -37,6 +39,71 @@ class RecordingClient(GmailClient):
 
 
 class AppleMailGmailTests(unittest.TestCase):
+    def test_inline_plain_text_body_is_decoded(self):
+        body = base64.urlsafe_b64encode(
+            "Line one\nLine two".encode("utf-8")
+        ).decode("ascii").rstrip("=")
+        message = {
+            "payload": {
+                "mimeType": "text/plain",
+                "body": {"data": body, "size": 17},
+            }
+        }
+        self.assertEqual(message_body(message), "Line one\nLine two")
+
+    def test_external_text_body_fails_closed(self):
+        message = {
+            "payload": {
+                "mimeType": "text/plain",
+                "body": {"attachmentId": "external-body", "size": 20},
+            }
+        }
+        with self.assertRaisesRegex(GmailBodyUnavailable, "not available inline"):
+            message_body(message)
+
+    def test_empty_inline_data_with_positive_or_malformed_size_fails_closed(self):
+        for size in (20, "not-a-size"):
+            message = {
+                "payload": {
+                    "mimeType": "text/plain",
+                    "body": {"data": "", "size": size},
+                }
+            }
+            with self.subTest(size=size), self.assertRaises(
+                GmailBodyUnavailable
+            ):
+                message_body(message)
+
+    def test_gmail_mime_attachment_count_covers_disposition_and_external_parts(self):
+        message = {
+            "payload": {
+                "mimeType": "multipart/mixed",
+                "parts": [
+                    {
+                        "mimeType": "text/plain",
+                        "body": {"data": "", "size": 0},
+                    },
+                    {
+                        "mimeType": "application/octet-stream",
+                        "filename": "",
+                        "headers": [
+                            {
+                                "name": "Content-Disposition",
+                                "value": "attachment",
+                            }
+                        ],
+                        "body": {"attachmentId": "document", "size": 100},
+                    },
+                    {
+                        "mimeType": "image/png",
+                        "filename": "",
+                        "body": {"attachmentId": "inline-image", "size": 100},
+                    },
+                ],
+            }
+        }
+        self.assertEqual(attachment_count(message), 2)
+
     def test_access_token_is_loaded_once_for_parallel_requests(self):
         store = DummyTokenStore()
         client = GmailClient(store)
@@ -139,6 +206,7 @@ class AppleMailGmailTests(unittest.TestCase):
         self.assertIn("\n", records[0]["BODY"])
         self.assertEqual(records[0]["READ"], "false")
         self.assertEqual(records[1]["READ"], "true")
+        self.assertEqual(records[0]["ATTACHMENT_COUNT_SOURCE"], "gmail_mime")
 
     def test_read_mismatch_stops_before_any_full_body_fetch(self):
         class MismatchClient:

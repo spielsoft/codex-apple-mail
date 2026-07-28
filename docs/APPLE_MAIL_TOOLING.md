@@ -55,7 +55,16 @@ validates up to ten selected identities in one Mail process before retrieving
 their bodies; use it instead of concurrent singleton reads. When a Gmail token
 and expected account are supplied, it instead uses bounded concurrent Gmail
 API calls, with a complete metadata/read-state barrier before any full body is
-fetched.
+fetched. If Gmail represents a selected text body only through an attachment
+identifier, the request layer does not fetch that attachment; after the Gmail
+identity barrier succeeds, `get-batch` falls back to the same bounded Mail
+batch rather than returning an incomplete body. Other Gmail failures remain
+errors and do not trigger fallback.
+
+`ATTACHMENT_COUNT_SOURCE` identifies how `get-batch` produced
+`ATTACHMENT_COUNT`: `apple_mail` is Mail's native attachment object count and
+`gmail_mime` is a count derived from Gmail MIME metadata. The source field
+makes the two backend semantics explicit while retaining the existing count.
 
 ## Selection format
 
@@ -122,6 +131,10 @@ scripts/apple-mail apply \
 
 scripts/apple-mail verify --plan local-artifacts/transfer-plan.json
 
+scripts/apple-mail reconcile \
+  --plan local-artifacts/transfer-plan.json \
+  --audit local-artifacts/audit.jsonl
+
 scripts/apple-mail probe-copy --plan local-artifacts/transfer-plan.json
 ```
 
@@ -162,8 +175,17 @@ state; all other Mail errors remain failures.
 
 A successful Gmail label-removal phase returns `pending_mail_sync` after
 requesting one synchronization. Do not reapply. Wait one synchronization
-interval and run one bounded `verify`; begin another sequential block only
-after it proves the planned destination and source state.
+interval and run one bounded `reconcile` with the same plan and audit.
+Reconciliation is read-only and requires no OAuth. It appends `complete` only
+when every destination copy is exact and read-preserved and every source is
+absent. It retains `pending_mail_sync` while every source is either exact or
+absent and at least one exact source remains during cache convergence, and
+appends `mutation_state_unknown` for invalid, unreadable, ambiguous, or
+numeric-ID-reuse evidence. `DESTINATION_COUNT=1` already denotes one fully
+identity-matching copy because verification rejects Message-ID collisions and
+counts only complete identity matches. Begin another sequential block only
+after reconciliation reports `complete`. Use `verify` separately when
+per-message diagnostics are needed; it does not append a lifecycle event.
 
 ## OAuth
 

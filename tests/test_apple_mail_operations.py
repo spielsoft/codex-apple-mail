@@ -10,13 +10,16 @@ sys.path.insert(
 
 from apple_mail.operations import (
     OperationError,
-    _remove_inbox_labels_parallel,
     apply_create_mailbox,
     apply_gmail_inbox_to_local,
     apply_local_move,
     apply_set_read,
     probe_account_to_local_copy,
     verify_messages,
+)
+from apple_mail.gmail_labels import (
+    GmailMutationStateUnknown,
+    remove_inbox_labels_with_rollback,
 )
 from apple_mail.plans import (
     account_source,
@@ -341,22 +344,39 @@ class AppleMailOperationTests(unittest.TestCase):
         )
         self.assertEqual(copy_call[1][0], "apply")
 
-    def test_partial_copy_returns_pending_without_gmail_change(self):
+    def test_gmail_label_change_happens_only_after_copy_barrier_returns(self):
+        barrier_state = {"returned": False}
+
+        class BarrierRunner(SequencedRunner):
+            def run_tsv(self, script, arguments=()):
+                result = super().run_tsv(script, arguments)
+                if script == "copy_account_to_local.applescript":
+                    barrier_state["returned"] = True
+                return result
+
+        class BarrierClient(FakeGmailClient):
+            def modify_inbox_label(self, gmail_id, *, add=False, remove=False):
+                if not barrier_state["returned"]:
+                    raise AssertionError(
+                        "Gmail mutation started before the copy barrier returned"
+                    )
+                return super().modify_inbox_label(
+                    gmail_id, add=add, remove=remove
+                )
+
         plan = build_message_plan(
             "gmail_inbox_to_local",
             account_source("person@example.com"),
             [MESSAGE],
             destination=local_destination("On My Mac/Review"),
         )
-        runner = SequencedRunner(
-            [verification()],
+        runner = BarrierRunner(
             script_results={
-                "copy_account_to_local.applescript": copy_barrier(
-                    destination_count="0", identity="false"
-                )
-            },
+                "copy_account_to_local.applescript": copy_barrier()
+            }
         )
-        client = FakeGmailClient()
+        client = BarrierClient()
+
         result = apply_gmail_inbox_to_local(
             runner,
             client,
@@ -364,9 +384,82 @@ class AppleMailOperationTests(unittest.TestCase):
             expected_account="person@example.com",
             allowed_destinations=["On My Mac/Review"],
         )
-        self.assertEqual(result["status"], "pending_local_copy")
-        self.assertEqual(result["local_copy_barrier_attempts"], 2)
-        self.assertEqual(client.modifications, [])
+
+        self.assertEqual(result["status"], "pending_mail_sync")
+        self.assertEqual(client.modifications, [("gmail-1", False, True)])
+
+    def test_invalid_copy_evidence_returns_pending_without_gmail_change(self):
+        plan = build_message_plan(
+            "gmail_inbox_to_local",
+            account_source("person@example.com"),
+            [MESSAGE],
+            destination=local_destination("On My Mac/Review"),
+        )
+        invalid_barriers = (
+            copy_barrier(destination_count="0", identity="false"),
+            copy_barrier(destination_count="1", identity="false"),
+            [
+                {
+                    **copy_barrier()[0],
+                    "DESTINATION_READ": "true",
+                }
+            ],
+        )
+        for barrier in invalid_barriers:
+            with self.subTest(barrier=barrier):
+                runner = SequencedRunner(
+                    script_results={
+                        "copy_account_to_local.applescript": barrier
+                    },
+                )
+                client = FakeGmailClient()
+
+                result = apply_gmail_inbox_to_local(
+                    runner,
+                    client,
+                    plan,
+                    expected_account="person@example.com",
+                    allowed_destinations=["On My Mac/Review"],
+                )
+
+                self.assertEqual(result["status"], "pending_local_copy")
+                self.assertEqual(result["local_copy_barrier_attempts"], 2)
+                self.assertEqual(client.modifications, [])
+                self.assertNotIn(
+                    "synchronize_account.applescript",
+                    [call[0] for call in runner.calls],
+                )
+
+    def test_gmail_transfer_batch_limit_stops_before_external_io(self):
+        messages = []
+        for index in range(11):
+            item = dict(MESSAGE)
+            item["mail_id"] = 1000 + index
+            item["message_id"] = "stable-{}@example.com".format(index)
+            item["subject"] = "Example {}".format(index)
+            messages.append(item)
+        plan = build_message_plan(
+            "gmail_inbox_to_local",
+            account_source("person@example.com"),
+            messages,
+            destination=local_destination("On My Mac/Review"),
+        )
+        runner = SequencedRunner()
+
+        class UnexpectedGmailIO(FakeGmailClient):
+            def profile(self):
+                raise AssertionError("Gmail I/O must not start")
+
+        with self.assertRaisesRegex(OperationError, "cannot exceed 10"):
+            apply_gmail_inbox_to_local(
+                runner,
+                UnexpectedGmailIO(),
+                plan,
+                expected_account="person@example.com",
+                allowed_destinations=["On My Mac/Review"],
+            )
+
+        self.assertEqual(runner.calls, [])
 
     def test_gmail_transfer_defers_mail_cache_check_to_later_verify(self):
         plan = build_message_plan(
@@ -396,28 +489,80 @@ class AppleMailOperationTests(unittest.TestCase):
             [call[0] for call in runner.calls],
         )
 
-    def test_parallel_gmail_failure_rolls_back_every_confirmed_change(self):
-        class PartialFailureClient:
+    def test_lost_mutation_response_rolls_back_every_observed_change(self):
+        class LostResponseClient:
+            def __init__(self):
+                self.calls = []
+                self.metadata_calls = []
+                self.labels = {
+                    "gmail-1": {"INBOX", "IMPORTANT"},
+                    "gmail-2": {"INBOX", "IMPORTANT"},
+                    "gmail-3": {"INBOX", "IMPORTANT"},
+                }
+
+            def modify_inbox_label(self, gmail_id, *, add=False, remove=False):
+                self.calls.append((gmail_id, add, remove))
+                if remove:
+                    self.labels[gmail_id].discard("INBOX")
+                else:
+                    self.labels[gmail_id].add("INBOX")
+                if remove and gmail_id == "gmail-2":
+                    raise RuntimeError("response lost after mutation")
+                return {
+                    "id": gmail_id,
+                    "labelIds": sorted(self.labels[gmail_id]),
+                }
+
+            def get_metadata(self, gmail_id):
+                self.metadata_calls.append(gmail_id)
+                return {
+                    "id": gmail_id,
+                    "labelIds": sorted(self.labels[gmail_id]),
+                }
+
+        client = LostResponseClient()
+        with self.assertRaisesRegex(RuntimeError, "response lost after mutation"):
+            remove_inbox_labels_with_rollback(
+                client,
+                [{"id": "gmail-1"}, {"id": "gmail-2"}, {"id": "gmail-3"}],
+            )
+        self.assertEqual(
+            client.labels,
+            {
+                "gmail-1": {"INBOX", "IMPORTANT"},
+                "gmail-2": {"INBOX", "IMPORTANT"},
+                "gmail-3": {"INBOX", "IMPORTANT"},
+            },
+        )
+        self.assertIn(("gmail-1", True, False), client.calls)
+        self.assertIn(("gmail-2", True, False), client.calls)
+        self.assertIn(("gmail-3", True, False), client.calls)
+        self.assertEqual(
+            sorted(client.metadata_calls),
+            sorted(["gmail-1", "gmail-2", "gmail-3"] * 2),
+        )
+
+    def test_unreadable_reconciliation_surfaces_unknown_mutation_state(self):
+        class UnreadableClient:
             def __init__(self):
                 self.calls = []
 
             def modify_inbox_label(self, gmail_id, *, add=False, remove=False):
                 self.calls.append((gmail_id, add, remove))
-                if remove and gmail_id == "gmail-2":
-                    raise RuntimeError("bounded failure")
-                return {
-                    "id": gmail_id,
-                    "labelIds": ["INBOX"] if add else ["IMPORTANT"],
-                }
+                if remove:
+                    raise RuntimeError("response lost")
+                return {"id": gmail_id, "labelIds": ["INBOX"]}
 
-        client = PartialFailureClient()
-        with self.assertRaisesRegex(RuntimeError, "bounded failure"):
-            _remove_inbox_labels_parallel(
-                client,
-                [{"id": "gmail-1"}, {"id": "gmail-2"}, {"id": "gmail-3"}],
-            )
+            def get_metadata(self, gmail_id):
+                raise RuntimeError("metadata unavailable")
+
+        client = UnreadableClient()
+        with self.assertRaisesRegex(
+            GmailMutationStateUnknown,
+            r"mutation state is unknown for 1 of 1 planned messages",
+        ):
+            remove_inbox_labels_with_rollback(client, [{"id": "gmail-1"}])
         self.assertIn(("gmail-1", True, False), client.calls)
-        self.assertIn(("gmail-3", True, False), client.calls)
 
 
 if __name__ == "__main__":

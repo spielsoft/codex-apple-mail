@@ -1,5 +1,4 @@
 import json
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
@@ -7,10 +6,9 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from .gmail import (
     GmailClient,
-    GmailError,
     resolve_messages_parallel,
-    validate_archived_labels,
 )
+from .gmail_labels import remove_inbox_labels_with_rollback
 from .mail import MailRunner
 from .plans import require_allowed_destination, validate_plan
 
@@ -233,51 +231,6 @@ def _elapsed(started_at: float) -> float:
     return round(perf_counter() - started_at, 3)
 
 
-def _remove_inbox_labels_parallel(
-    client: GmailClient,
-    gmail_messages: Sequence[Dict[str, Any]],
-) -> List[str]:
-    gmail_ids = [str(message["id"]) for message in gmail_messages]
-    if len(set(gmail_ids)) != len(gmail_ids):
-        raise OperationError("Gmail resolution returned a duplicate message")
-    changed: Dict[str, Dict[str, Any]] = {}
-    errors: List[Exception] = []
-    with ThreadPoolExecutor(max_workers=len(gmail_ids)) as executor:
-        futures = {
-            executor.submit(
-                client.modify_inbox_label,
-                gmail_id,
-                remove=True,
-            ): gmail_id
-            for gmail_id in gmail_ids
-        }
-        for future in as_completed(futures):
-            gmail_id = futures[future]
-            try:
-                response = future.result()
-                changed[gmail_id] = response
-                validate_archived_labels(response)
-            except Exception as error:
-                errors.append(error)
-    if errors:
-        rollback_errors = []
-        for gmail_id in reversed(gmail_ids):
-            if gmail_id not in changed:
-                continue
-            try:
-                client.modify_inbox_label(gmail_id, add=True)
-            except GmailError as error:
-                rollback_errors.append(str(error))
-        if rollback_errors:
-            raise OperationError(
-                "Gmail mutation failed and rollback was incomplete: {}".format(
-                    "; ".join(rollback_errors)
-                )
-            )
-        raise errors[0]
-    return gmail_ids
-
-
 def apply_local_move(
     runner: MailRunner,
     plan: Dict[str, Any],
@@ -472,7 +425,7 @@ def apply_gmail_inbox_to_local(
         return result
 
     phase_started = perf_counter()
-    changed_ids = _remove_inbox_labels_parallel(client, gmail_messages)
+    changed_ids = remove_inbox_labels_with_rollback(client, gmail_messages)
     phase_seconds["gmail_label_removal"] = _elapsed(phase_started)
 
     phase_started = perf_counter()

@@ -11,7 +11,7 @@ control Mail's UI or issue ad hoc AppleScript.
 ## Execution permission
 
 Apple Mail access uses macOS Apple Events, which the default command sandbox
-blocks. For `discover`, `list`, `get`, `get-batch`, `verify`, `probe-copy`,
+blocks. For `discover`, `list`, `get`, `get-batch`, `verify`, `reconcile`, `probe-copy`,
 `apply --execute`, and `authorize`, make the first shell-tool call with
 `sandbox_permissions: "require_escalated"` (or the surface's equivalent scoped
 permission) and a concise Apple Mail justification. Do not try the command in
@@ -24,7 +24,9 @@ permission immediately; it does not override the active Codex approval policy.
   read-only command. Prefer one `get-batch` call over concurrent singleton
   `get` calls when reading two to ten messages from one mailbox. For Gmail
   Inbox and an existing OAuth token, pass `--token` and `--expected-account`
-  to use the faster Gmail API backend; otherwise the command uses Mail.
+  to use the faster Gmail API backend; otherwise the command uses Mail. If
+  Gmail reports that selected text is not inline, the command safely falls
+  back to its bounded Mail batch; do not fetch Gmail attachment content.
 - For a change: list exact messages, create a hashed plan, inspect it, dry-run
   it, then apply only when the user has authorized that scope.
 - For Gmail Inbox to local: use `plan-gmail-transfer`; never substitute a Mail
@@ -51,8 +53,9 @@ selection schema.
 6. Never change Mail without a hashed plan and explicit `--execute`.
 7. Supply every destination again through exact `--allow-destination`.
 8. Require an append-only audit path for execution.
-9. If a result is pending synchronization, verify later; do not repeat the
-   mutation or poll continuously.
+9. If a Gmail transfer is pending synchronization, run one later `reconcile`
+   with the same plan and audit; do not repeat the mutation or poll
+   continuously. Continue only after reconciliation reports `complete`.
 
 The tool supplies mechanics only. Apply the user's separate filing or
 retention policy in agent reasoning, not in this skill's code.

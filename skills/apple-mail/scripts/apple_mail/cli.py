@@ -4,7 +4,12 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
-from .gmail import GmailClient, get_message_records_parallel
+from .gmail import (
+    GmailBodyUnavailable,
+    GmailClient,
+    get_message_records_parallel,
+)
+from .gmail_labels import GmailMutationStateUnknown
 from .mail import MailRunner
 from .oauth import TokenStore, authorize_desktop
 from .operations import (
@@ -27,6 +32,7 @@ from .plans import (
     validate_plan,
     write_json,
 )
+from .reconciliation import reconcile_gmail_transfer
 
 
 PACKAGE_DIR = Path(__file__).resolve().parent
@@ -100,6 +106,34 @@ def command_get(args: argparse.Namespace) -> None:
     )
 
 
+def _get_batch_from_mail(
+    source: Dict[str, str],
+    messages: List[Dict[str, Any]],
+    *,
+    body_limit: int,
+    timeout: int,
+) -> List[Dict[str, Any]]:
+    arguments = _source_script_arguments(source) + [str(body_limit)]
+    for message in messages:
+        arguments.extend(
+            [
+                str(message["mail_id"]),
+                str(message["message_id"]),
+                str(message["subject"]),
+                str(message.get("sender", "")),
+                str(message["received_at"])[:19],
+                "true" if message["read"] else "false",
+            ]
+        )
+    records = MailRunner(APPLESCRIPT_DIR, timeout).run_tsv(
+        "get_messages.applescript", arguments
+    )
+    for record in records:
+        if record.get("TYPE") == "MESSAGE":
+            record["ATTACHMENT_COUNT_SOURCE"] = "apple_mail"
+    return records
+
+
 def command_get_batch(args: argparse.Namespace) -> None:
     source = _source_from_args(args)
     plan = build_message_plan(
@@ -131,29 +165,32 @@ def command_get_batch(args: argparse.Namespace) -> None:
             expected_account.casefold()
         ):
             raise ValueError("Authenticated Gmail profile does not match the account")
-        _print_json(
-            get_message_records_parallel(
+        try:
+            records = get_message_records_parallel(
                 client,
                 messages,
                 body_limit=args.body_limit,
             )
-        )
+        except GmailBodyUnavailable:
+            print(
+                "Gmail body is unavailable inline; using bounded Apple Mail "
+                "retrieval.",
+                file=sys.stderr,
+            )
+            records = _get_batch_from_mail(
+                source,
+                messages,
+                body_limit=args.body_limit,
+                timeout=args.timeout,
+            )
+        _print_json(records)
         return
-    arguments = _source_script_arguments(source) + [str(args.body_limit)]
-    for message in messages:
-        arguments.extend(
-            [
-                str(message["mail_id"]),
-                str(message["message_id"]),
-                str(message["subject"]),
-                str(message.get("sender", "")),
-                str(message["received_at"])[:19],
-                "true" if message["read"] else "false",
-            ]
-        )
     _print_json(
-        MailRunner(APPLESCRIPT_DIR, args.timeout).run_tsv(
-            "get_messages.applescript", arguments
+        _get_batch_from_mail(
+            source,
+            messages,
+            body_limit=args.body_limit,
+            timeout=args.timeout,
         )
     )
 
@@ -205,6 +242,18 @@ def command_verify(args: argparse.Namespace) -> None:
     plan = read_json(args.plan)
     validate_plan(plan)
     _print_json(verify_messages(MailRunner(APPLESCRIPT_DIR, args.timeout), plan))
+
+
+def command_reconcile(args: argparse.Namespace) -> None:
+    plan = read_json(args.plan)
+    validate_plan(plan)
+    _print_json(
+        reconcile_gmail_transfer(
+            MailRunner(APPLESCRIPT_DIR, args.timeout),
+            plan,
+            audit_path=args.audit,
+        )
+    )
 
 
 def command_probe_copy(args: argparse.Namespace) -> None:
@@ -268,10 +317,15 @@ def command_apply(args: argparse.Namespace) -> None:
         else:
             raise ValueError("Unsupported plan action")
     except Exception as error:
+        failure_status = (
+            "mutation_state_unknown"
+            if isinstance(error, GmailMutationStateUnknown)
+            else "operation_failed"
+        )
         append_audit_event(
             args.audit,
             {
-                "status": "operation_failed",
+                "status": failure_status,
                 "action": action,
                 "plan_hash": plan["plan_hash"],
                 "error_type": type(error).__name__,
@@ -358,6 +412,11 @@ def build_parser() -> argparse.ArgumentParser:
     verify = subparsers.add_parser("verify")
     verify.add_argument("--plan", type=Path, required=True)
     verify.set_defaults(handler=command_verify)
+
+    reconcile = subparsers.add_parser("reconcile")
+    reconcile.add_argument("--plan", type=Path, required=True)
+    reconcile.add_argument("--audit", type=Path, required=True)
+    reconcile.set_defaults(handler=command_reconcile)
 
     probe_copy = subparsers.add_parser("probe-copy")
     probe_copy.add_argument("--plan", type=Path, required=True)

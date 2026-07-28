@@ -1,15 +1,19 @@
 import base64
+import fcntl
 import hashlib
 import json
 import os
 import secrets
+import stat
+import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Iterator, Optional, Tuple
 
 
 GMAIL_MODIFY_SCOPE = "https://www.googleapis.com/auth/gmail.modify"
@@ -65,6 +69,56 @@ def _write_private_json(path: Path, value: Dict[str, Any]) -> None:
     except Exception:
         try:
             path.unlink()
+        except OSError:
+            pass
+        raise
+
+
+@contextmanager
+def _token_refresh_lock(path: Path) -> Iterator[None]:
+    lock_path = path.with_name(path.name + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_RDWR | os.O_CREAT
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    descriptor = os.open(str(lock_path), flags, 0o600)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise OAuthError("Token refresh lock is not a regular file")
+        os.fchmod(descriptor, 0o600)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
+
+
+def _replace_private_json(path: Path, value: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=".{}.".format(path.name),
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            descriptor = -1
+            json.dump(value, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(str(temporary), str(path))
+    except Exception:
+        if descriptor >= 0:
+            os.close(descriptor)
+        try:
+            temporary.unlink()
         except OSError:
             pass
         raise
@@ -202,22 +256,23 @@ class TokenStore:
         document = self.load()
         if int(document.get("expires_at", 0)) > int(time.time()) + 60:
             return str(document["access_token"])
-        values = {
-            "client_id": str(document["client_id"]),
-            "refresh_token": str(document["refresh_token"]),
-            "grant_type": "refresh_token",
-        }
-        if document.get("client_secret"):
-            values["client_secret"] = str(document["client_secret"])
-        response = _post_form(str(document["token_uri"]), values)
-        if not response.get("access_token"):
-            raise OAuthError("Refresh response is missing access_token")
-        document["access_token"] = response["access_token"]
-        document["expires_at"] = int(time.time()) + int(response.get("expires_in", 3600))
-        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
-        if temporary.exists():
-            temporary.unlink()
-        _write_private_json(temporary, document)
-        os.replace(str(temporary), str(self.path))
-        os.chmod(str(self.path), 0o600)
-        return str(document["access_token"])
+        with _token_refresh_lock(self.path):
+            document = self.load()
+            if int(document.get("expires_at", 0)) > int(time.time()) + 60:
+                return str(document["access_token"])
+            values = {
+                "client_id": str(document["client_id"]),
+                "refresh_token": str(document["refresh_token"]),
+                "grant_type": "refresh_token",
+            }
+            if document.get("client_secret"):
+                values["client_secret"] = str(document["client_secret"])
+            response = _post_form(str(document["token_uri"]), values)
+            if not response.get("access_token"):
+                raise OAuthError("Refresh response is missing access_token")
+            document["access_token"] = response["access_token"]
+            document["expires_at"] = int(time.time()) + int(
+                response.get("expires_in", 3600)
+            )
+            _replace_private_json(self.path, document)
+            return str(document["access_token"])

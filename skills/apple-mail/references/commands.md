@@ -4,11 +4,11 @@ Set `APPLE_MAIL` to the absolute path of this skill's `scripts/apple-mail`
 entry point.
 
 Commands that access Mail or Gmail require macOS Apple Events or network
-access. Run the first `discover`, `list`, `get`, `get-batch`, `verify`, `probe-copy`,
-`apply --execute`, or `authorize` attempt with scoped sandbox escalation. Do
-not spend a failed attempt discovering this requirement. Planning, plan
-inspection, and dry runs remain local and can run in the normal workspace
-sandbox.
+access. Run the first `discover`, `list`, `get`, `get-batch`, `verify`,
+`reconcile`, `probe-copy`, `apply --execute`, or `authorize` attempt with
+scoped sandbox escalation. Do not spend a failed attempt discovering this
+requirement. Planning, plan inspection, and dry runs remain local and can run
+in the normal workspace sandbox.
 
 ## Read
 
@@ -49,8 +49,17 @@ any body. Without OAuth arguments it uses one serial AppleScript process. With
 both OAuth arguments it verifies the authenticated profile, resolves the ten
 Gmail identities concurrently, completes the metadata/read-state barrier, and
 then retrieves the bodies concurrently. It emits the same record schema and
-does not change Gmail or Mail. Do not parallelize singleton `get` calls against
-Mail.
+does not change Gmail or Mail. When Gmail exposes selected text only through
+an attachment identifier, the tool does not retrieve attachment content. It
+falls back to one bounded Mail batch after the completed Gmail identity
+barrier. Authentication, network, and identity failures do not trigger this
+fallback. Do not parallelize singleton `get` calls against Mail.
+
+`get-batch` retains `ATTACHMENT_COUNT` and adds
+`ATTACHMENT_COUNT_SOURCE`. A source of `apple_mail` means Mail's native
+attachment object count; `gmail_mime` means the count was derived from Gmail
+MIME metadata and should not be assumed to be identical to Mail's object
+model.
 
 Each `MESSAGE` row from `list` includes:
 
@@ -133,6 +142,10 @@ Use a list or an object containing `messages`, `items`, or `records`:
 
 "$APPLE_MAIL" verify --plan transfer-plan.json
 
+"$APPLE_MAIL" reconcile \
+  --plan transfer-plan.json \
+  --audit audit.jsonl
+
 "$APPLE_MAIL" probe-copy --plan transfer-plan.json
 ```
 
@@ -161,7 +174,23 @@ most 6.3 seconds after `duplicate`; it never polls continuously.
 After confirmed Gmail label removal, execution requests one Mail
 synchronization and returns `pending_mail_sync` without launching a
 predictably premature full cache verification. Do not reapply. Run one later
-bounded `verify` before beginning another sequential block.
+bounded `reconcile` with the same immutable plan and audit before beginning
+another sequential block. Reconciliation is read-only and needs neither OAuth
+nor a destination allowlist. It appends and returns:
+
+- `complete` only when every destination has exactly one identity-matching
+  copy with preserved read state and every planned source is absent;
+- `pending_mail_sync` when every destination is valid, every source is either
+  exact or absent, and at least one exact source still remains; or
+- `mutation_state_unknown` for invalid, unreadable, ambiguous, or
+  numeric-ID-reuse states.
+
+The reconciliation audit contains only the action, plan hash, aggregate
+counts, status, and generic reason codes. Use `verify` when raw per-message
+diagnostics are needed; unlike `reconcile`, it does not append a lifecycle
+event. `DESTINATION_COUNT=1` already denotes one fully identity-matching copy:
+the verifier rejects Message-ID collisions and counts only full identity
+matches.
 
 ## OAuth
 
