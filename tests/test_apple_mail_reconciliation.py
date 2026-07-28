@@ -94,6 +94,17 @@ class AppleMailReconciliationTests(unittest.TestCase):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         audit_path = Path(temporary.name) / "audit.jsonl"
+        audit_path.write_text(
+            json.dumps(
+                {
+                    "status": "pending_mail_sync",
+                    "action": self.plan["action"],
+                    "plan_hash": self.plan["plan_hash"],
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         result = reconcile_gmail_transfer(
             VerificationRunner(rows, error),
             self.plan,
@@ -205,6 +216,17 @@ class AppleMailReconciliationTests(unittest.TestCase):
             plan_path = root / "plan.json"
             audit_path = root / "audit.jsonl"
             write_json(plan_path, self.plan)
+            audit_path.write_text(
+                json.dumps(
+                    {
+                        "status": "pending_mail_sync",
+                        "action": self.plan["action"],
+                        "plan_hash": self.plan["plan_hash"],
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
             args = build_parser().parse_args(
                 [
                     "reconcile",
@@ -229,6 +251,47 @@ class AppleMailReconciliationTests(unittest.TestCase):
                 for line in audit_path.read_text(encoding="utf-8").splitlines()
             ]
             self.assertEqual(audit[-1]["status"], "complete")
+
+    def test_operation_failed_audit_requires_resume_before_reconcile(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            audit_path = Path(temporary) / "audit.jsonl"
+            audit_path.write_text(
+                "\n".join(
+                    json.dumps(event)
+                    for event in (
+                        {
+                            "status": "operation_started",
+                            "action": self.plan["action"],
+                            "plan_hash": self.plan["plan_hash"],
+                        },
+                        {
+                            "status": "operation_failed",
+                            "action": self.plan["action"],
+                            "plan_hash": self.plan["plan_hash"],
+                        },
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            runner = VerificationRunner(
+                self._rows(("absent", "absent"))
+            )
+
+            with self.assertRaisesRegex(ValueError, "explicit resume"):
+                reconcile_gmail_transfer(
+                    runner,
+                    self.plan,
+                    audit_path=audit_path,
+                )
+
+            records = [
+                json.loads(line)
+                for line in audit_path.read_text(
+                    encoding="utf-8"
+                ).splitlines()
+            ]
+            self.assertEqual(len(records), 2)
 
 
 if __name__ == "__main__":

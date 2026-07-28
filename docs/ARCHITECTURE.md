@@ -93,7 +93,9 @@ Complete snapshots identify Spam-created `INBOX` labels, gate cleanup, and
 confirm the final state. Explicit resume is available only for the same plan
 and audit after a started-and-failed lifecycle. It verifies every destination
 copy through Mail, skips copying, and removes the source label only from the
-Gmail subset where it remains present.
+Gmail subset where it remains present. Reconciliation is lifecycle-gated: an
+apply failure must pass through Gmail-aware resume before Mail-only
+reconciliation can classify the transaction.
 
 After source-label removal, Mail can raise error `-1719` while an indexed source
 filter is disappearing instead of returning an empty collection. The indexed

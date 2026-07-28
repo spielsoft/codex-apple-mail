@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
@@ -13,6 +14,46 @@ MUTATION_STATE_UNKNOWN = "mutation_state_unknown"
 
 def _bool_text(value: bool) -> str:
     return "true" if value else "false"
+
+
+def _require_reconcilable_audit(
+    audit_path: Path,
+    plan: Dict[str, Any],
+) -> None:
+    if not audit_path.is_file():
+        raise ValueError(
+            "Reconciliation requires the existing transfer audit"
+        )
+    try:
+        events = [
+            json.loads(line)
+            for line in audit_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except (OSError, ValueError) as error:
+        raise ValueError("Transfer audit is unreadable") from error
+    matching = [
+        event
+        for event in events
+        if (
+            event.get("action") == plan["action"]
+            and event.get("plan_hash") == plan["plan_hash"]
+        )
+    ]
+    if not matching:
+        raise ValueError(
+            "Reconciliation requires a matching transfer lifecycle"
+        )
+    latest = matching[-1]
+    reconcilable = latest.get("status") == PENDING_MAIL_SYNC or (
+        latest.get("status") == MUTATION_STATE_UNKNOWN
+        and "reason_codes" in latest
+    )
+    if not reconcilable:
+        raise ValueError(
+            "Reconciliation requires pending Mail synchronization; "
+            "use explicit resume for a failed Gmail mutation"
+        )
 
 
 def _result(
@@ -157,6 +198,7 @@ def reconcile_gmail_transfer(
     validate_plan(plan)
     if plan["action"] not in GMAIL_TRANSFER_ACTIONS:
         raise ValueError("Reconciliation requires a Gmail source-to-local plan")
+    _require_reconcilable_audit(audit_path, plan)
     try:
         rows = verify_messages(runner, plan)
         result = classify_gmail_transfer_state(plan, rows)

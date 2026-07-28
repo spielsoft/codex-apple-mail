@@ -117,6 +117,8 @@ prohibited. Explicit resume requires the same immutable plan and audit, a
 prior matching started-and-failed lifecycle, and one exact read-preserved
 destination copy for every planned message. It changes only source labels
 that remain present and treats an already-absent source label as completed.
+Reconciliation refuses a latest `operation_failed` lifecycle because Mail's
+cache is not authoritative for recovery from a failed Gmail mutation.
 
 ## Inventory and content
 

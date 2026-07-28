@@ -238,6 +238,10 @@ action-specific Gmail source label being either present or already absent,
 and removes the label only from the still-present subset. Spam resume also
 requires `INBOX` absent before proceeding. A normal apply remains strict and
 requires the source label on every selected Gmail message.
+`reconcile` refuses an audit whose latest matching lifecycle event is
+`operation_failed`; Mail's cache cannot authoritatively close a failed Gmail
+mutation. After resume returns `pending_mail_sync`, reconciliation is enabled
+again.
 
 ## OAuth
 
