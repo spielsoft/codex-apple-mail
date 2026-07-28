@@ -12,9 +12,15 @@ Never perform one large-mailbox RFC Message-ID scan per message. Numeric IDs
 are fast but non-durable, so a numeric hit without complete corroboration must
 fail closed.
 
+Gmail `internalDate` is compared to the plan's local-naive `received_at` with
+an absolute tolerance of at most 24 hours. This admits adjacent-midnight
+representations without accepting a wider discrepancy than calendar-date
+comparison previously could.
+
 Mail Apple Events must remain serial. Independent Gmail API requests may run
 concurrently within the fixed ten-message bound. The client resolves its OAuth
-access token once per process so concurrent reads never race token refresh.
+access token once per process, while a private per-token file lock serializes
+refresh across processes.
 
 ## Transaction shape
 
@@ -32,8 +38,10 @@ For Gmail Inbox-to-local:
    stopping after the first complete snapshot. Treat the final result as the
    local-copy barrier; never poll beyond the same 6.3-second wait bound.
 5. Remove only Gmail `INBOX` with bounded concurrent per-message responses.
-   Wait for every response; on any failure, roll back every confirmed change
-   before returning the error.
+   Wait for every response; on any failure, authoritatively read every planned
+   Gmail ID, restore `INBOX` wherever removal is observed or initial state is
+   unavailable, then read every ID again before reporting rollback or an
+   unknown mutation state.
 6. Request one Mail synchronization.
 7. Return `pending_mail_sync` without immediately querying the cache that was
    just asked to synchronize. A later bounded `reconcile` establishes and

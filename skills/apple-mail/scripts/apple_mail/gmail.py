@@ -5,7 +5,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 from email.utils import parseaddr
 from typing import Any, Dict, List, Optional, Sequence
 
@@ -20,10 +20,30 @@ from .oauth import TokenStore
 API_ROOT = "https://gmail.googleapis.com/gmail/v1/users/me"
 PERMITTED_LABEL = "INBOX"
 FORBIDDEN_LABEL = "TRASH"
+RECEIVED_AT_TOLERANCE = timedelta(hours=24)
 
 
 class GmailError(RuntimeError):
     pass
+
+
+def _identity_resolution_error(
+    item_index: int,
+    stage: str,
+    observed_count: int,
+    *,
+    candidate_count: Optional[int] = None,
+    mismatched_fields: Optional[Sequence[str]] = None,
+) -> GmailError:
+    detail = (
+        "Gmail identity resolution failed for planned item {}: "
+        "stage={}; observed_count={}; expected_count=1"
+    ).format(item_index, stage, observed_count)
+    if candidate_count is not None:
+        detail += "; candidate_count={}".format(candidate_count)
+    if mismatched_fields:
+        detail += "; mismatched_fields={}".format(",".join(mismatched_fields))
+    return GmailError(detail)
 
 
 class GmailClient:
@@ -146,48 +166,82 @@ def header_map(message: Dict[str, Any]) -> Dict[str, str]:
     }
 
 
+def corroboration_mismatches(
+    message: Dict[str, Any],
+    item: Dict[str, Any],
+    *,
+    require_read: bool = False,
+) -> List[str]:
+    mismatches: List[str] = []
+    headers = header_map(message)
+    expected_id = str(item["message_id"]).strip("<>").lower()
+    actual_id = headers.get("message-id", "").strip("<>").lower()
+    if actual_id != expected_id:
+        mismatches.append("message_id")
+    if headers.get("subject", "") != item["subject"]:
+        mismatches.append("subject")
+    expected_sender = parseaddr(str(item.get("sender", "")))[1].lower()
+    actual_sender = parseaddr(headers.get("from", ""))[1].lower()
+    if expected_sender and actual_sender != expected_sender:
+        mismatches.append("sender")
+    internal_date = message.get("internalDate")
+    if internal_date:
+        actual_local_time = datetime.fromtimestamp(int(internal_date) / 1000)
+        expected_local_time = datetime.strptime(
+            str(item["received_at"])[:19],
+            "%Y-%m-%dT%H:%M:%S",
+        )
+        if abs(actual_local_time - expected_local_time) > RECEIVED_AT_TOLERANCE:
+            mismatches.append("received_date")
+    if require_read:
+        actual_read = "UNREAD" not in set(message.get("labelIds", []))
+        if actual_read != bool(item["read"]):
+            mismatches.append("read_state")
+    return mismatches
+
+
 def corroborates_plan_item(
     message: Dict[str, Any],
     item: Dict[str, Any],
     *,
     require_read: bool = False,
 ) -> bool:
-    headers = header_map(message)
-    expected_id = str(item["message_id"]).strip("<>").lower()
-    actual_id = headers.get("message-id", "").strip("<>").lower()
-    if actual_id != expected_id:
-        return False
-    if headers.get("subject", "") != item["subject"]:
-        return False
-    expected_sender = parseaddr(str(item.get("sender", "")))[1].lower()
-    actual_sender = parseaddr(headers.get("from", ""))[1].lower()
-    if expected_sender and actual_sender != expected_sender:
-        return False
-    internal_date = message.get("internalDate")
-    if internal_date:
-        actual_local_date = datetime.fromtimestamp(int(internal_date) / 1000).date()
-        expected_date = datetime.fromisoformat(str(item["received_at"])).date()
-        if actual_local_date != expected_date:
-            return False
-    if require_read:
-        actual_read = "UNREAD" not in set(message.get("labelIds", []))
-        if actual_read != bool(item["read"]):
-            return False
-    return True
+    return not corroboration_mismatches(
+        message,
+        item,
+        require_read=require_read,
+    )
 
 
 def resolve_unique_message(
-    client: GmailClient, item: Dict[str, Any]
+    client: GmailClient,
+    item: Dict[str, Any],
+    *,
+    item_index: int,
 ) -> Dict[str, Any]:
     references = client.list_by_rfc_message_id(str(item["message_id"]))
+    if not references:
+        raise _identity_resolution_error(
+            item_index,
+            "reference_lookup",
+            0,
+        )
     matches: List[Dict[str, Any]] = []
+    single_candidate_mismatches: Optional[List[str]] = None
     for reference in references:
         message = client.get_metadata(reference["id"])
-        if corroborates_plan_item(message, item):
+        mismatches = corroboration_mismatches(message, item)
+        if len(references) == 1:
+            single_candidate_mismatches = mismatches
+        if not mismatches:
             matches.append(message)
     if len(matches) != 1:
-        raise GmailError(
-            "Expected one corroborated Gmail message, found {}".format(len(matches))
+        raise _identity_resolution_error(
+            item_index,
+            "metadata_corroboration",
+            len(matches),
+            candidate_count=len(references),
+            mismatched_fields=single_candidate_mismatches,
         )
     return matches[0]
 
@@ -201,8 +255,12 @@ def resolve_messages_parallel(
     with ThreadPoolExecutor(max_workers=len(items)) as executor:
         return list(
             executor.map(
-                lambda item: resolve_unique_message(client, item),
-                items,
+                lambda indexed_item: resolve_unique_message(
+                    client,
+                    indexed_item[1],
+                    item_index=indexed_item[0],
+                ),
+                enumerate(items, start=1),
             )
         )
 
@@ -216,17 +274,45 @@ def get_message_records_parallel(
     if body_limit < 0 or body_limit > 100000:
         raise GmailError("Body limit is outside the supported range")
     metadata = resolve_messages_parallel(client, items)
-    for message, item in zip(metadata, items):
-        if not corroborates_plan_item(message, item, require_read=True):
-            raise GmailError("Gmail read identity corroboration failed")
+    for item_index, (message, item) in enumerate(
+        zip(metadata, items), start=1
+    ):
+        mismatches = corroboration_mismatches(
+            message,
+            item,
+            require_read=True,
+        )
+        if mismatches:
+            raise _identity_resolution_error(
+                item_index,
+                "read_state_corroboration",
+                0,
+                mismatched_fields=mismatches,
+            )
     gmail_ids = [str(message["id"]) for message in metadata]
     with ThreadPoolExecutor(max_workers=len(gmail_ids)) as executor:
         full_messages = list(executor.map(client.get_full, gmail_ids))
-    for full_message, item, gmail_id in zip(full_messages, items, gmail_ids):
+    for item_index, (full_message, item, gmail_id) in enumerate(
+        zip(full_messages, items, gmail_ids), start=1
+    ):
         if str(full_message.get("id", "")) != gmail_id:
-            raise GmailError("Gmail full-message response ID changed")
-        if not corroborates_plan_item(full_message, item, require_read=True):
-            raise GmailError("Gmail full-message identity corroboration failed")
+            raise _identity_resolution_error(
+                item_index,
+                "full_response_binding",
+                0,
+            )
+        mismatches = corroboration_mismatches(
+            full_message,
+            item,
+            require_read=True,
+        )
+        if mismatches:
+            raise _identity_resolution_error(
+                item_index,
+                "full_identity_corroboration",
+                0,
+                mismatched_fields=mismatches,
+            )
     records: List[Dict[str, str]] = []
     for full_message, item in zip(full_messages, items):
         body = message_body(full_message)

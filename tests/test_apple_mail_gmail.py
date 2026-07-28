@@ -3,6 +3,7 @@ import sys
 import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,7 +15,10 @@ from apple_mail.gmail import (
     GmailBodyUnavailable,
     GmailClient,
     GmailError,
+    corroborates_plan_item,
+    corroboration_mismatches,
     get_message_records_parallel,
+    resolve_messages_parallel,
 )
 from apple_mail.gmail_content import attachment_count, message_body
 
@@ -39,6 +43,192 @@ class RecordingClient(GmailClient):
 
 
 class AppleMailGmailTests(unittest.TestCase):
+    def test_resolution_error_identifies_item_with_no_search_candidate(self):
+        class MissingReferenceClient:
+            def list_by_rfc_message_id(self, message_id):
+                if message_id == "stable-2@example.com":
+                    return []
+                return [{"id": "gmail-1"}]
+
+            def get_metadata(self, gmail_id):
+                return {
+                    "id": gmail_id,
+                    "payload": {
+                        "headers": [
+                            {
+                                "name": "Message-ID",
+                                "value": "<stable-1@example.com>",
+                            },
+                            {"name": "Subject", "value": "Example 1"},
+                            {
+                                "name": "From",
+                                "value": "Sender <sender@example.com>",
+                            },
+                        ]
+                    },
+                }
+
+        items = [
+            {
+                "message_id": "stable-1@example.com",
+                "subject": "Example 1",
+                "sender": "Sender <sender@example.com>",
+                "received_at": "2018-03-07T12:00:00",
+            },
+            {
+                "message_id": "stable-2@example.com",
+                "subject": "Example 2",
+                "sender": "Sender <sender@example.com>",
+                "received_at": "2018-03-07T12:00:00",
+            },
+        ]
+
+        with self.assertRaisesRegex(
+            GmailError,
+            r"planned item 2: stage=reference_lookup; "
+            r"observed_count=0; expected_count=1$",
+        ) as caught:
+            resolve_messages_parallel(MissingReferenceClient(), items)
+
+        self.assertNotIn("stable-2@example.com", str(caught.exception))
+        self.assertNotIn("Example 2", str(caught.exception))
+
+    def test_resolution_error_names_single_candidate_mismatched_fields(self):
+        class NonmatchingMetadataClient:
+            def list_by_rfc_message_id(self, message_id):
+                return [{"id": "gmail-a"}]
+
+            def get_metadata(self, gmail_id):
+                return {
+                    "id": gmail_id,
+                    "internalDate": "1",
+                    "payload": {
+                        "headers": [
+                            {
+                                "name": "Message-ID",
+                                "value": "<different@example.com>",
+                            },
+                            {"name": "Subject", "value": "Different"},
+                            {
+                                "name": "From",
+                                "value": "Other <other@example.com>",
+                            },
+                        ]
+                    },
+                }
+
+        item = {
+            "message_id": "stable@example.com",
+            "subject": "Example",
+            "sender": "Sender <sender@example.com>",
+            "received_at": "2018-03-07T12:00:00",
+        }
+
+        with self.assertRaisesRegex(
+            GmailError,
+            r"planned item 1: stage=metadata_corroboration; "
+            r"observed_count=0; expected_count=1; candidate_count=1; "
+            r"mismatched_fields=message_id,subject,sender,received_date$",
+        ) as caught:
+            resolve_messages_parallel(NonmatchingMetadataClient(), [item])
+
+        self.assertNotIn("stable@example.com", str(caught.exception))
+        self.assertNotIn("Example", str(caught.exception))
+        self.assertNotIn("sender@example.com", str(caught.exception))
+
+    def test_boolean_corroboration_wrapper_uses_canonical_field_details(self):
+        item = {
+            "message_id": "stable@example.com",
+            "subject": "Example",
+            "sender": "Sender <sender@example.com>",
+            "received_at": "2018-03-07T12:00:00",
+            "read": True,
+        }
+        candidate = {
+            "labelIds": ["UNREAD"],
+            "payload": {
+                "headers": [
+                    {
+                        "name": "Message-ID",
+                        "value": "<stable@example.com>",
+                    },
+                    {"name": "Subject", "value": "Different"},
+                    {
+                        "name": "From",
+                        "value": "Sender <sender@example.com>",
+                    },
+                ]
+            },
+        }
+
+        self.assertEqual(
+            corroboration_mismatches(candidate, item, require_read=True),
+            ["subject", "read_state"],
+        )
+        self.assertFalse(
+            corroborates_plan_item(candidate, item, require_read=True)
+        )
+
+    def test_received_time_accepts_adjacent_date_within_24_hours(self):
+        expected = datetime(2018, 3, 7, 23, 30)
+        candidate = {
+            "internalDate": str(
+                int((expected + timedelta(minutes=45)).timestamp() * 1000)
+            ),
+            "payload": {
+                "headers": [
+                    {
+                        "name": "Message-ID",
+                        "value": "<stable@example.com>",
+                    },
+                    {"name": "Subject", "value": "Example"},
+                    {
+                        "name": "From",
+                        "value": "Sender <sender@example.com>",
+                    },
+                ]
+            },
+        }
+        item = {
+            "message_id": "stable@example.com",
+            "subject": "Example",
+            "sender": "Sender <sender@example.com>",
+            "received_at": expected.isoformat(),
+        }
+
+        self.assertEqual(corroboration_mismatches(candidate, item), [])
+
+    def test_received_time_rejects_more_than_24_hours(self):
+        expected = datetime(2018, 3, 7, 12, 0)
+        candidate_time = expected + timedelta(hours=24, seconds=1)
+        candidate = {
+            "internalDate": str(int(candidate_time.timestamp() * 1000)),
+            "payload": {
+                "headers": [
+                    {
+                        "name": "Message-ID",
+                        "value": "<stable@example.com>",
+                    },
+                    {"name": "Subject", "value": "Example"},
+                    {
+                        "name": "From",
+                        "value": "Sender <sender@example.com>",
+                    },
+                ]
+            },
+        }
+        item = {
+            "message_id": "stable@example.com",
+            "subject": "Example",
+            "sender": "Sender <sender@example.com>",
+            "received_at": expected.isoformat(),
+        }
+
+        self.assertEqual(
+            corroboration_mismatches(candidate, item),
+            ["received_date"],
+        )
+
     def test_inline_plain_text_body_is_decoded(self):
         body = base64.urlsafe_b64encode(
             "Line one\nLine two".encode("utf-8")
@@ -248,9 +438,68 @@ class AppleMailGmailTests(unittest.TestCase):
             "read": True,
         }
         client = MismatchClient()
-        with self.assertRaisesRegex(GmailError, "read identity"):
+        with self.assertRaisesRegex(
+            GmailError,
+            r"planned item 1: stage=read_state_corroboration; "
+            r"observed_count=0; expected_count=1; "
+            r"mismatched_fields=read_state$",
+        ):
             get_message_records_parallel(client, [item], body_limit=100)
         self.assertEqual(client.full_calls, 0)
+
+    def test_full_corroboration_error_names_fields_without_values(self):
+        class FullMismatchClient:
+            def list_by_rfc_message_id(self, message_id):
+                return [{"id": "gmail-1"}]
+
+            def _message(self, *, subject, unread):
+                return {
+                    "id": "gmail-1",
+                    "labelIds": ["UNREAD"] if unread else [],
+                    "payload": {
+                        "headers": [
+                            {
+                                "name": "Message-ID",
+                                "value": "<stable@example.com>",
+                            },
+                            {"name": "Subject", "value": subject},
+                            {
+                                "name": "From",
+                                "value": "Sender <sender@example.com>",
+                            },
+                        ]
+                    },
+                }
+
+            def get_metadata(self, gmail_id):
+                return self._message(subject="Expected subject", unread=False)
+
+            def get_full(self, gmail_id):
+                return self._message(subject="Private changed value", unread=True)
+
+        item = {
+            "mail_id": 123,
+            "message_id": "stable@example.com",
+            "subject": "Expected subject",
+            "sender": "Sender <sender@example.com>",
+            "received_at": "2018-03-07T12:00:00",
+            "read": True,
+        }
+
+        with self.assertRaisesRegex(
+            GmailError,
+            r"planned item 1: stage=full_identity_corroboration; "
+            r"observed_count=0; expected_count=1; "
+            r"mismatched_fields=subject,read_state$",
+        ) as caught:
+            get_message_records_parallel(
+                FullMismatchClient(),
+                [item],
+                body_limit=100,
+            )
+
+        self.assertNotIn("Expected subject", str(caught.exception))
+        self.assertNotIn("Private changed value", str(caught.exception))
 
 
 if __name__ == "__main__":
