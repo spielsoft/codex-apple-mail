@@ -2,6 +2,15 @@
 
 **Read when:** using the bundled `apple-mail` skill or development wrapper.
 
+## Codex execution permission
+
+Mail automation uses macOS Apple Events, which are outside Codex's default
+command sandbox. A task that invokes this plugin authorizes Codex to request
+the required scoped escalation on the first Mail-accessing command rather than
+probing in the sandbox first. Codex's active approval policy still decides
+whether that escalation is auto-reviewed or shown to the user. Planning,
+inspection, and dry runs do not need Apple Events access.
+
 ## Capabilities
 
 ```sh
@@ -99,6 +108,10 @@ scripts/apple-mail verify --plan local-artifacts/transfer-plan.json
 `apply` is a dry run unless `--execute` is present. Execution requires an audit
 path. Destination-bearing plans require an exact allowlist on both dry run and
 execution. `set_read` has no destination allowlist.
+
+Verification reports separate source match Booleans for Message-ID, subject,
+sender, and received time. A failed mutation preflight identifies only plan
+item positions and mismatched field names; it never includes message content.
 
 ## OAuth
 

@@ -8,6 +8,16 @@ description: Read and organize email in Apple's Mail app on macOS through transp
 Use the bundled `scripts/apple-mail` command for every Mail operation. Do not
 control Mail's UI or issue ad hoc AppleScript.
 
+## Execution permission
+
+Apple Mail access uses macOS Apple Events, which the default command sandbox
+blocks. For `discover`, `list`, `get`, `verify`, `apply --execute`, and
+`authorize`, make the first shell-tool call with
+`sandbox_permissions: "require_escalated"` (or the surface's equivalent scoped
+permission) and a concise Apple Mail justification. Do not try the command in
+the sandbox first. Invocation of this skill authorizes requesting that scoped
+permission immediately; it does not override the active Codex approval policy.
+
 ## Choose the workflow
 
 - For discovery, listing including flag labels, or reading: run a bounded

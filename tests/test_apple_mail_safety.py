@@ -22,6 +22,13 @@ BATCH_SCRIPTS = MUTATION_SCRIPTS[:3] + (
 
 
 class AppleMailSafetyTests(unittest.TestCase):
+    def test_skill_requires_first_call_mail_escalation(self):
+        source = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn('sandbox_permissions: "require_escalated"', source)
+        self.assertRegex(
+            source, r"Do not try the command in\s+the sandbox first\."
+        )
+
     def test_batch_scripts_avoid_mail_offset_term_collision(self):
         for script in BATCH_SCRIPTS:
             source = script.read_text(encoding="utf-8")
@@ -30,6 +37,24 @@ class AppleMailSafetyTests(unittest.TestCase):
                 "{} uses Mail's offset term as a loop variable".format(
                     script.name
                 ),
+            )
+
+    def test_identity_checks_coerce_mail_sender_to_text(self):
+        for script in MUTATION_SCRIPTS[:3] + (
+            APPLESCRIPTS / "verify_messages.applescript",
+        ):
+            source = script.read_text(encoding="utf-8")
+            self.assertRegex(
+                source,
+                r"set actualSender to \(get sender of .+\) as text",
+                script.name,
+            )
+            self.assertIn("id of character characterIndex", source)
+            self.assertIn("on normalizedSender(theText)", source)
+            self.assertIn('set quoteMarker to quote & " <"', source)
+            self.assertIn("normalizedSender(actualSender)", source)
+            self.assertRegex(
+                source, r"normalizedSender\(expectedSender(?:Text)?\)"
             )
 
     def test_mutation_scripts_have_no_forbidden_commands(self):

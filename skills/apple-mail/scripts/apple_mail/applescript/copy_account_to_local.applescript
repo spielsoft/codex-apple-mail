@@ -20,6 +20,28 @@ on normalizedMessageID(theText)
 	return normalized
 end normalizedMessageID
 
+on normalizedSender(theText)
+	set senderText to theText as text
+	set quoteMarker to quote & " <"
+	if senderText begins with quote then
+		set quotePosition to offset of quoteMarker in senderText
+		if quotePosition > 1 then
+			return (text 2 thru (quotePosition - 1) of senderText) & (text (quotePosition + 1) thru -1 of senderText)
+		end if
+	end if
+	return senderText
+end normalizedSender
+
+on textMatches(leftValue, rightValue)
+	set leftText to leftValue as text
+	set rightText to rightValue as text
+	if (count of leftText) is not (count of rightText) then return false
+	repeat with characterIndex from 1 to count of leftText
+		if (id of character characterIndex of leftText) is not (id of character characterIndex of rightText) then return false
+	end repeat
+	return true
+end textMatches
+
 on localPathParts(fullPath)
 	if not my beginsWith(fullPath, "On My Mac/") then error "Local path must begin with On My Mac/"
 	set relativePath to text 11 thru -1 of fullPath
@@ -50,9 +72,11 @@ end resolveLocalMailbox
 
 on identityMatches(theMessage, expectedMessageID, expectedSubject, expectedSender, datePrefix, expectedRead)
 	tell application "Mail"
-		if my normalizedMessageID(«class meid» of theMessage) is not my normalizedMessageID(expectedMessageID) then return false
-		if subject of theMessage is not expectedSubject then return false
-		if expectedSender is not "" and sender of theMessage is not expectedSender then return false
+		if not my textMatches(my normalizedMessageID(«class meid» of theMessage), my normalizedMessageID(expectedMessageID)) then return false
+		set actualSubject to (get subject of theMessage) as text
+		set actualSender to (get sender of theMessage) as text
+		if not my textMatches(actualSubject, expectedSubject) then return false
+		if expectedSender is not "" and not my textMatches(my normalizedSender(actualSender), my normalizedSender(expectedSender)) then return false
 		if not my beginsWith(my isoDate(«class rdrc» of theMessage), datePrefix) then return false
 		if («class isrd» of theMessage as text) is not expectedRead then return false
 	end tell

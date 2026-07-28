@@ -3,6 +3,12 @@
 Set `APPLE_MAIL` to the absolute path of this skill's `scripts/apple-mail`
 entry point.
 
+Commands that access Mail or Gmail require macOS Apple Events or network
+access. Run the first `discover`, `list`, `get`, `verify`, `apply --execute`,
+or `authorize` attempt with scoped sandbox escalation. Do not spend a failed
+attempt discovering this requirement. Planning, plan inspection, and dry runs
+remain local and can run in the normal workspace sandbox.
+
 ## Read
 
 ```sh
@@ -110,6 +116,9 @@ Use a list or an object containing `messages`, `items`, or `records`:
 
 Read-state plans omit `--allow-destination`. All execution requires `--audit`.
 Gmail execution additionally requires `--token` and `--expected-account`.
+Verification reports separate source match Booleans for Message-ID, subject,
+sender, and received time. A failed mutation preflight names only the plan item
+positions and mismatched field names; it does not print message content.
 
 ## OAuth
 

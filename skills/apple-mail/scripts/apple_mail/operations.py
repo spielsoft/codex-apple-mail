@@ -59,21 +59,61 @@ def verify_messages(
     return runner.run_tsv("verify_messages.applescript", arguments)
 
 
-def _indexed_sources_are_valid(
+def _source_mismatches(
     rows: Sequence[Dict[str, str]], messages: Sequence[Dict[str, Any]]
-) -> bool:
+) -> List[str]:
     if len(rows) != len(messages):
-        return False
+        return ["result_count"]
     expected = {str(item["mail_id"]): item for item in messages}
-    for row in rows:
+    positions = {
+        str(item["mail_id"]): index
+        for index, item in enumerate(messages, start=1)
+    }
+    mismatches: List[str] = []
+    seen = set()
+    identity_fields = (
+        ("SOURCE_MESSAGE_ID_MATCH", "message_id"),
+        ("SOURCE_SUBJECT_MATCH", "subject"),
+        ("SOURCE_SENDER_MATCH", "sender"),
+        ("SOURCE_RECEIVED_AT_MATCH", "received_at"),
+    )
+    for row_number, row in enumerate(rows, start=1):
         message = expected.get(row.get("MAIL_ID", ""))
         if message is None:
-            return False
-        if row.get("SOURCE_ID_COUNT") != "1" or row.get("SOURCE_IDENTITY") != "true":
-            return False
+            mismatches.append("result {} (unexpected_mail_id)".format(row_number))
+            continue
+        position = positions[str(message["mail_id"])]
+        seen.add(str(message["mail_id"]))
+        fields = []
+        if row.get("SOURCE_ID_COUNT") != "1":
+            fields.append("source_id_count")
+        if row.get("SOURCE_IDENTITY") != "true":
+            detailed_fields = [
+                label
+                for column, label in identity_fields
+                if row.get(column) == "false"
+            ]
+            fields.extend(detailed_fields or ["identity"])
         if row.get("SOURCE_READ") != _bool_text(bool(message["read"])):
-            return False
-    return True
+            fields.append("read_state")
+        if fields:
+            mismatches.append(
+                "item {} ({})".format(position, ",".join(fields))
+            )
+    for mail_id, position in positions.items():
+        if mail_id not in seen:
+            mismatches.append("item {} (missing_result)".format(position))
+    return mismatches
+
+
+def _require_valid_sources(
+    rows: Sequence[Dict[str, str]],
+    messages: Sequence[Dict[str, Any]],
+    label: str,
+) -> None:
+    mismatches = _source_mismatches(rows, messages)
+    if mismatches:
+        raise OperationError("{}: {}".format(label, "; ".join(mismatches)))
 
 
 def _destinations_are_valid(
@@ -127,8 +167,9 @@ def apply_local_move(
     if plan["action"] != "move_local":
         raise OperationError("Plan is not a local move")
     before = verify_messages(runner, plan)
-    if not _indexed_sources_are_valid(before, plan["messages"]):
-        raise OperationError("Local source preflight failed")
+    _require_valid_sources(
+        before, plan["messages"], "Local source preflight failed"
+    )
     if not _destinations_are_valid(before, plan["messages"], required=False):
         raise OperationError("Local destination preflight failed")
     if any(row["DESTINATION_COUNT"] != "0" for row in before):
@@ -174,8 +215,9 @@ def apply_set_read(
     if plan["action"] != "set_read":
         raise OperationError("Plan is not a read-state change")
     before = verify_messages(runner, plan)
-    if not _indexed_sources_are_valid(before, plan["messages"]):
-        raise OperationError("Read-state source preflight failed")
+    _require_valid_sources(
+        before, plan["messages"], "Read-state source preflight failed"
+    )
     _append_audit(
         audit_path,
         {
@@ -270,8 +312,9 @@ def apply_gmail_inbox_to_local(
         gmail_messages.append(gmail_message)
 
     before = verify_messages(runner, plan)
-    if not _indexed_sources_are_valid(before, plan["messages"]):
-        raise OperationError("Mail source preflight failed")
+    _require_valid_sources(
+        before, plan["messages"], "Mail source preflight failed"
+    )
     if not _destinations_are_valid(before, plan["messages"], required=False):
         raise OperationError("Local destination preflight failed")
 

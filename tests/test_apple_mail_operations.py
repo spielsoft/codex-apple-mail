@@ -36,12 +36,17 @@ MESSAGE = {
 
 
 def verification(source_count="1", source_read="false", destination_count="0"):
+    source_matches = "true" if source_count == "1" else "false"
     return [
         {
             "MAIL_ID": "123",
             "MESSAGE_ID": "stable-id@example.com",
             "SOURCE_ID_COUNT": source_count,
-            "SOURCE_IDENTITY": "true" if source_count == "1" else "false",
+            "SOURCE_IDENTITY": source_matches,
+            "SOURCE_MESSAGE_ID_MATCH": source_matches,
+            "SOURCE_SUBJECT_MATCH": source_matches,
+            "SOURCE_SENDER_MATCH": source_matches,
+            "SOURCE_RECEIVED_AT_MATCH": source_matches,
             "SOURCE_READ": source_read if source_count == "1" else "",
             "DESTINATION_COUNT": destination_count,
             "DESTINATION_READ": "false" if destination_count == "1" else "",
@@ -147,6 +152,28 @@ class AppleMailOperationTests(unittest.TestCase):
             "move_local_messages.applescript",
             [call[0] for call in runner.calls],
         )
+
+    def test_preflight_diagnostic_names_only_item_and_mismatched_fields(self):
+        plan = build_message_plan(
+            "move_local",
+            local_source("On My Mac/One"),
+            [MESSAGE],
+            destination=local_destination("On My Mac/Two"),
+        )
+        mismatch = verification()
+        mismatch[0]["SOURCE_IDENTITY"] = "false"
+        mismatch[0]["SOURCE_SENDER_MATCH"] = "false"
+        runner = SequencedRunner([mismatch])
+        with self.assertRaisesRegex(
+            OperationError,
+            r"Local source preflight failed: item 1 \(sender\)",
+        ) as raised:
+            apply_local_move(
+                runner, plan, allowed_destinations=["On My Mac/Two"]
+            )
+        self.assertNotIn(MESSAGE["subject"], str(raised.exception))
+        self.assertNotIn(MESSAGE["sender"], str(raised.exception))
+        self.assertNotIn(MESSAGE["message_id"], str(raised.exception))
 
     def test_local_move_is_one_bulk_call_with_batch_verification(self):
         plan = build_message_plan(

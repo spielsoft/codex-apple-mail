@@ -51,6 +51,28 @@ on normalizedMessageID(theText)
 	return normalized
 end normalizedMessageID
 
+on normalizedSender(theText)
+	set senderText to theText as text
+	set quoteMarker to quote & " <"
+	if senderText begins with quote then
+		set quotePosition to offset of quoteMarker in senderText
+		if quotePosition > 1 then
+			return (text 2 thru (quotePosition - 1) of senderText) & (text (quotePosition + 1) thru -1 of senderText)
+		end if
+	end if
+	return senderText
+end normalizedSender
+
+on textMatches(leftValue, rightValue)
+	set leftText to leftValue as text
+	set rightText to rightValue as text
+	if (count of leftText) is not (count of rightText) then return false
+	repeat with characterIndex from 1 to count of leftText
+		if (id of character characterIndex of leftText) is not (id of character characterIndex of rightText) then return false
+	end repeat
+	return true
+end textMatches
+
 on run argv
 	if (count of argv) < 10 then error "Insufficient arguments"
 	if ((count of argv) - 4) mod 6 is not 0 then error "Message arguments must be groups of six"
@@ -80,9 +102,11 @@ on run argv
 			set sourceMatches to messages of sourceMailbox whose id is expectedMailID
 			if (count of sourceMatches) is not 1 then error "Expected one indexed source match"
 			set sourceMessage to item 1 of sourceMatches
-			if my normalizedMessageID(«class meid» of sourceMessage) is not expectedMessageID then error "Indexed source identity check failed"
-			if subject of sourceMessage is not expectedSubject then error "Indexed source subject check failed"
-			if expectedSender is not "" and sender of sourceMessage is not expectedSender then error "Indexed source originator check failed"
+			if not my textMatches(my normalizedMessageID(«class meid» of sourceMessage), expectedMessageID) then error "Indexed source identity check failed"
+			set actualSubject to (get subject of sourceMessage) as text
+			set actualSender to (get sender of sourceMessage) as text
+			if not my textMatches(actualSubject, expectedSubject) then error "Indexed source subject check failed"
+			if expectedSender is not "" and not my textMatches(my normalizedSender(actualSender), my normalizedSender(expectedSender)) then error "Indexed source originator check failed"
 			if not my beginsWith(my isoDate(«class rdrc» of sourceMessage), datePrefix) then error "Indexed source date check failed"
 			if («class isrd» of sourceMessage as text) is not expectedRead then error "Indexed source state check failed"
 			set end of messagesToChange to sourceMessage
