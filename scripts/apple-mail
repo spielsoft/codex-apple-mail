@@ -1,0 +1,3 @@
+#!/bin/sh
+PROJECT_DIRECTORY=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+exec "$PROJECT_DIRECTORY/skills/apple-mail/scripts/apple-mail" "$@"

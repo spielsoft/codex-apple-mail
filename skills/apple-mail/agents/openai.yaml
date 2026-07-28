@@ -1,0 +1,4 @@
+interface:
+  display_name: "Apple Mail"
+  short_description: "Read and organize Apple Mail safely"
+  default_prompt: "Use Apple Mail to inspect or organize my email with a reviewed plan."

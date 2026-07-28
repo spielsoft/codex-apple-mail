@@ -1,0 +1,31 @@
+{
+  "name": "codex-apple-mail",
+  "version": "0.1.0",
+  "description": "Transparent, plan-based Apple Mail reading and organization without Computer Control.",
+  "author": {
+    "name": "SpielSoft",
+    "email": "spielman@spielsoft.com",
+    "url": "https://github.com/SpielSoft"
+  },
+  "homepage": "https://github.com/SpielSoft/codex-apple-mail",
+  "repository": "https://github.com/SpielSoft/codex-apple-mail",
+  "license": "MIT",
+  "keywords": [
+    "apple-mail",
+    "macos",
+    "email",
+    "gmail",
+    "oauth",
+    "mail-automation"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Apple Mail",
+    "shortDescription": "Read and organize Apple Mail safely.",
+    "longDescription": "Discover, read, mark, create mailboxes, and move messages through audited background scripts.",
+    "developerName": "SpielSoft",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "Use Apple Mail to inspect or organize my email with a reviewed plan."
+  }
+}

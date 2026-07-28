@@ -1,0 +1,23 @@
+# Generated inventories and audit data may contain private email metadata.
+local-artifacts/
+*credentials*.json
+*client_secret*.json
+*token*.json
+*.pem
+*.p12
+.env
+.env.*
+
+# Local runtime files
+*.sqlite
+*.sqlite3
+*.db
+*.jsonl
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store

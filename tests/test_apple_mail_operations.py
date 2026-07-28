@@ -1,0 +1,242 @@
+import tempfile
+import sys
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(
+    0, str(ROOT / "skills" / "apple-mail" / "scripts")
+)
+
+from apple_mail.operations import (
+    OperationError,
+    apply_create_mailbox,
+    apply_gmail_inbox_to_local,
+    apply_local_move,
+    apply_set_read,
+)
+from apple_mail.plans import (
+    account_source,
+    build_create_mailbox_plan,
+    build_message_plan,
+    local_destination,
+    local_source,
+)
+
+
+MESSAGE = {
+    "mail_id": 123,
+    "message_id": "stable-id@example.com",
+    "subject": "Example",
+    "sender": "Sender <sender@example.com>",
+    "received_at": "2018-03-07T12:00:00",
+    "read": False,
+}
+
+
+def verification(source_count="1", source_read="false", destination_count="0"):
+    return [
+        {
+            "MAIL_ID": "123",
+            "MESSAGE_ID": "stable-id@example.com",
+            "SOURCE_ID_COUNT": source_count,
+            "SOURCE_IDENTITY": "true" if source_count == "1" else "false",
+            "SOURCE_READ": source_read if source_count == "1" else "",
+            "DESTINATION_COUNT": destination_count,
+            "DESTINATION_READ": "false" if destination_count == "1" else "",
+        }
+    ]
+
+
+class SequencedRunner:
+    def __init__(self, verifications=None, script_results=None):
+        self.verifications = list(verifications or [])
+        self.script_results = dict(script_results or {})
+        self.calls = []
+
+    def run_tsv(self, script, arguments=()):
+        self.calls.append((script, list(arguments)))
+        if script == "verify_messages.applescript":
+            return self.verifications.pop(0)
+        return self.script_results.get(script, [{"STATUS": "OK"}])
+
+    def run_raw(self, script, arguments=()):
+        self.calls.append((script, list(arguments)))
+        return "OK"
+
+
+class FakeGmailClient:
+    def __init__(self):
+        self.modifications = []
+
+    def profile(self):
+        return {"emailAddress": "person@example.com"}
+
+    def list_by_rfc_message_id(self, message_id):
+        return [{"id": "gmail-1"}]
+
+    def get_metadata(self, gmail_id):
+        return {
+            "id": gmail_id,
+            "labelIds": ["INBOX", "IMPORTANT"],
+            "payload": {
+                "headers": [
+                    {"name": "Message-ID", "value": "<stable-id@example.com>"},
+                    {"name": "Subject", "value": "Example"},
+                    {
+                        "name": "From",
+                        "value": "Sender <sender@example.com>",
+                    },
+                ]
+            },
+        }
+
+    def modify_inbox_label(self, gmail_id, *, add=False, remove=False):
+        self.modifications.append((gmail_id, add, remove))
+        labels = ["INBOX"] if add else ["IMPORTANT"]
+        return {"id": gmail_id, "labelIds": labels}
+
+
+class AppleMailOperationTests(unittest.TestCase):
+    def test_stale_or_mismatched_numeric_id_stops_before_mutation(self):
+        plan = build_message_plan(
+            "move_local",
+            local_source("On My Mac/One"),
+            [MESSAGE],
+            destination=local_destination("On My Mac/Two"),
+        )
+        mismatch = verification()
+        mismatch[0]["SOURCE_IDENTITY"] = "false"
+        runner = SequencedRunner([mismatch])
+        with self.assertRaises(OperationError):
+            apply_local_move(
+                runner, plan, allowed_destinations=["On My Mac/Two"]
+            )
+        self.assertNotIn(
+            "move_local_messages.applescript",
+            [call[0] for call in runner.calls],
+        )
+
+    def test_local_move_is_one_bulk_call_with_batch_verification(self):
+        plan = build_message_plan(
+            "move_local",
+            local_source("On My Mac/One"),
+            [MESSAGE],
+            destination=local_destination("On My Mac/Two"),
+        )
+        runner = SequencedRunner(
+            [verification(), verification(source_count="0", destination_count="1")]
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            result = apply_local_move(
+                runner,
+                plan,
+                allowed_destinations=["On My Mac/Two"],
+                audit_path=Path(temporary) / "audit.jsonl",
+            )
+        self.assertEqual(result["status"], "complete")
+        scripts = [call[0] for call in runner.calls]
+        self.assertEqual(scripts.count("move_local_messages.applescript"), 1)
+        self.assertEqual(scripts.count("verify_messages.applescript"), 2)
+
+    def test_set_read_uses_a_plan_and_verifies_target_state(self):
+        plan = build_message_plan(
+            "set_read",
+            account_source("person@example.com"),
+            [MESSAGE],
+            target_read=True,
+        )
+        runner = SequencedRunner(
+            [verification(), verification(source_read="true")]
+        )
+        result = apply_set_read(runner, plan)
+        self.assertTrue(result["target_read"])
+
+    def test_create_mailbox_is_idempotent(self):
+        plan = build_create_mailbox_plan("On My Mac/New Folder")
+        runner = SequencedRunner(
+            script_results={
+                "create_local_mailbox.applescript": [
+                    {"STATUS": "EXISTS", "PATH": "On My Mac/New Folder"}
+                ]
+            }
+        )
+        result = apply_create_mailbox(
+            runner, plan, allowed_destinations=["On My Mac/New Folder"]
+        )
+        self.assertEqual(result["mailbox_status"], "exists")
+
+    def test_gmail_transfer_copies_once_then_changes_only_inbox_label(self):
+        plan = build_message_plan(
+            "gmail_inbox_to_local",
+            account_source("person@example.com"),
+            [MESSAGE],
+            destination=local_destination("On My Mac/Review"),
+        )
+        runner = SequencedRunner(
+            [
+                verification(),
+                verification(destination_count="1"),
+                verification(source_count="0", destination_count="1"),
+            ]
+        )
+        client = FakeGmailClient()
+        result = apply_gmail_inbox_to_local(
+            runner,
+            client,
+            plan,
+            expected_account="person@example.com",
+            allowed_destinations=["On My Mac/Review"],
+        )
+        self.assertEqual(result["status"], "complete")
+        self.assertEqual(client.modifications, [("gmail-1", False, True)])
+        self.assertEqual(
+            [call[0] for call in runner.calls].count(
+                "copy_account_to_local.applescript"
+            ),
+            1,
+        )
+
+    def test_partial_copy_returns_pending_without_gmail_change(self):
+        plan = build_message_plan(
+            "gmail_inbox_to_local",
+            account_source("person@example.com"),
+            [MESSAGE],
+            destination=local_destination("On My Mac/Review"),
+        )
+        runner = SequencedRunner([verification(), verification()])
+        client = FakeGmailClient()
+        result = apply_gmail_inbox_to_local(
+            runner,
+            client,
+            plan,
+            expected_account="person@example.com",
+            allowed_destinations=["On My Mac/Review"],
+        )
+        self.assertEqual(result["status"], "pending_local_copy")
+        self.assertEqual(client.modifications, [])
+
+    def test_final_numeric_id_reuse_fails_closed(self):
+        plan = build_message_plan(
+            "gmail_inbox_to_local",
+            account_source("person@example.com"),
+            [MESSAGE],
+            destination=local_destination("On My Mac/Review"),
+        )
+        reused = verification(source_count="1", destination_count="1")
+        reused[0]["SOURCE_IDENTITY"] = "false"
+        runner = SequencedRunner(
+            [verification(), verification(destination_count="1"), reused]
+        )
+        with self.assertRaises(OperationError):
+            apply_gmail_inbox_to_local(
+                runner,
+                FakeGmailClient(),
+                plan,
+                expected_account="person@example.com",
+                allowed_destinations=["On My Mac/Review"],
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()

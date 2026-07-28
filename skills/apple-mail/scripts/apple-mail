@@ -1,0 +1,5 @@
+#!/bin/sh
+SCRIPT_DIRECTORY=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+PYTHONPATH="$SCRIPT_DIRECTORY${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH
+exec /usr/bin/python3 -m apple_mail "$@"
