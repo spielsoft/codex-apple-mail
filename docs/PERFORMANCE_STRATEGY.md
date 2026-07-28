@@ -21,7 +21,10 @@ For Gmail Inbox-to-local:
 3. Submit one bulk `duplicate` command using a direct numeric-ID-filtered Mail
    object specifier capped at ten transfer messages.
 4. Refresh destination Message-IDs after `duplicate` and corroborate only the
-   matching candidates. Treat that result as the local-copy barrier.
+   matching candidates. Because Mail may expose accepted copies
+   asynchronously, retry that snapshot on the fixed delays 0.1, 0.2, 0.4,
+   0.8, 1.6, and 3.2 seconds. Treat the final result as the local-copy barrier;
+   never poll beyond this bounded schedule.
 5. Remove only Gmail `INBOX` with per-message responses and rollback.
 6. Request one Mail synchronization.
 7. Perform one final indexed source check.

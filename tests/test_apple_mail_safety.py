@@ -121,6 +121,15 @@ class AppleMailSafetyTests(unittest.TestCase):
             ),
         )
         self.assertIn("DESTINATION_IDENTITY", copy_source)
+        self.assertIn("BARRIER_ATTEMPTS", copy_source)
+        self.assertIn(
+            "set barrierDelays to {0.1, 0.2, 0.4, 0.8, 1.6, 3.2}",
+            copy_source,
+        )
+        self.assertIn(
+            "repeat with barrierDelay in barrierDelays", copy_source
+        )
+        self.assertNotIn("repeat while not", copy_source)
 
     def test_identity_checks_coerce_mail_sender_to_text(self):
         for script in MUTATION_SCRIPTS[:3] + (

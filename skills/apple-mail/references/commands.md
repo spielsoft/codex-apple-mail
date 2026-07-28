@@ -135,7 +135,9 @@ Inbox lookup as zero source matches; every other Mail error still propagates.
 copy AppleScript's source/destination resolution, identity, candidate, and
 selector-count path, reports copied/reused aggregate counts, and exits before
 `duplicate`. Gmail transfer plans are intentionally capped at ten messages per
-transaction.
+transaction. Execution waits on a fixed, bounded destination-visibility
+schedule for at most 6.3 seconds after `duplicate`; it never polls
+continuously.
 
 ## OAuth
 

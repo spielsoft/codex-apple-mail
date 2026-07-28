@@ -64,6 +64,7 @@ def copy_barrier(destination_count="1", identity="true"):
             "DESTINATION_COUNT": destination_count,
             "DESTINATION_READ": "false" if destination_count == "1" else "",
             "DESTINATION_IDENTITY": identity,
+            "BARRIER_ATTEMPTS": "2",
         }
     ]
 
@@ -317,6 +318,9 @@ class AppleMailOperationTests(unittest.TestCase):
             allowed_destinations=["On My Mac/Review"],
         )
         self.assertEqual(result["status"], "complete")
+        self.assertEqual(result["local_copies_submitted"], 1)
+        self.assertEqual(result["local_copies_reused"], 0)
+        self.assertEqual(result["local_copy_barrier_attempts"], 2)
         self.assertEqual(client.modifications, [("gmail-1", False, True)])
         self.assertEqual(
             [call[0] for call in runner.calls].count(
@@ -355,6 +359,7 @@ class AppleMailOperationTests(unittest.TestCase):
             allowed_destinations=["On My Mac/Review"],
         )
         self.assertEqual(result["status"], "pending_local_copy")
+        self.assertEqual(result["local_copy_barrier_attempts"], 2)
         self.assertEqual(client.modifications, [])
 
     def test_final_numeric_id_reuse_fails_closed(self):

@@ -193,6 +193,26 @@ def _copy_barrier_is_valid(
     return len(seen) == len(messages)
 
 
+def _copy_barrier_summary(
+    rows: Sequence[Dict[str, str]],
+) -> Dict[str, int]:
+    attempts = []
+    for row in rows:
+        try:
+            attempts.append(int(row.get("BARRIER_ATTEMPTS", "0")))
+        except (TypeError, ValueError):
+            pass
+    return {
+        "local_copies_submitted": sum(
+            row.get("STATUS") == "COPIED" for row in rows
+        ),
+        "local_copies_reused": sum(
+            row.get("STATUS") == "REUSED" for row in rows
+        ),
+        "local_copy_barrier_attempts": max(attempts or [0]),
+    }
+
+
 def _append_audit(path: Optional[Path], event: Dict[str, Any]) -> None:
     if path is None:
         return
@@ -388,11 +408,13 @@ def apply_gmail_inbox_to_local(
     ]
     arguments.extend(_message_arguments(plan["messages"]))
     copied = runner.run_tsv("copy_account_to_local.applescript", arguments)
+    copy_summary = _copy_barrier_summary(copied)
     if not _copy_barrier_is_valid(copied, plan["messages"]):
         result = {
             "status": "pending_local_copy",
             "action": plan["action"],
             "plan_hash": plan["plan_hash"],
+            **copy_summary,
         }
         _append_audit(audit_path, result)
         return result
@@ -434,6 +456,7 @@ def apply_gmail_inbox_to_local(
         "plan_hash": plan["plan_hash"],
         "message_count": len(plan["messages"]),
         "gmail_inbox_labels_removed": len(changed_ids),
+        **copy_summary,
     }
     _append_audit(audit_path, result)
     return result

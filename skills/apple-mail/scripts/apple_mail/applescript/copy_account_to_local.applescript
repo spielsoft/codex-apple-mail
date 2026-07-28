@@ -127,6 +127,21 @@ on destinationState(destinationMessages, destinationMessageIDs, expectedMessageI
 	return {destinationCount, destinationRead}
 end destinationState
 
+on allDestinationsReady(destinationMessages, destinationMessageIDs, argv, itemCount)
+	repeat with itemNumber from 1 to itemCount
+		set argumentOffset to 5 + ((itemNumber - 1) * 6)
+		set expectedMessageID to item (argumentOffset + 1) of argv
+		set expectedSubject to item (argumentOffset + 2) of argv
+		set expectedSender to item (argumentOffset + 3) of argv
+		set datePrefix to item (argumentOffset + 4) of argv
+		set expectedRead to item (argumentOffset + 5) of argv
+		set destinationResult to my destinationState(destinationMessages, destinationMessageIDs, expectedMessageID, expectedSubject, expectedSender, datePrefix, expectedRead)
+		if (item 1 of destinationResult) is not 1 then return false
+		if (item 2 of destinationResult) is not expectedRead then return false
+	end repeat
+	return true
+end allDestinationsReady
+
 on probeResult(itemCount, copyCount, reusedCount, selectorCount)
 	set probeReady to selectorCount is copyCount and (copyCount + reusedCount) is itemCount
 	return "MODE" & tab & "ITEM_COUNT" & tab & "COPY_COUNT" & tab & "REUSED_COUNT" & tab & "MISSING_COPY_COUNT" & tab & "SOURCE_SELECTOR_COUNT" & tab & "SOURCE_RESOLVED" & tab & "DESTINATION_RESOLVED" & tab & "READY" & linefeed & "probe" & tab & (itemCount as text) & tab & (copyCount as text) & tab & (reusedCount as text) & tab & (copyCount as text) & tab & (selectorCount as text) & tab & "true" & tab & "true" & tab & (probeReady as text)
@@ -200,9 +215,19 @@ on run argv
 	end if
 
 	set finalDestination to my destinationSnapshot(destinationMailbox)
+	set barrierAttempts to 1
+	if copyCount > 0 then
+		set barrierDelays to {0.1, 0.2, 0.4, 0.8, 1.6, 3.2}
+		repeat with barrierDelay in barrierDelays
+			if my allDestinationsReady(item 1 of finalDestination, item 2 of finalDestination, argv, itemCount) then exit repeat
+			delay (contents of barrierDelay)
+			set finalDestination to my destinationSnapshot(destinationMailbox)
+			set barrierAttempts to barrierAttempts + 1
+		end repeat
+	end if
 	set destinationMessages to item 1 of finalDestination
 	set destinationMessageIDs to item 2 of finalDestination
-	set outputLines to {"MAIL_ID" & tab & "STATUS" & tab & "DESTINATION_COUNT" & tab & "DESTINATION_READ" & tab & "DESTINATION_IDENTITY"}
+	set outputLines to {"MAIL_ID" & tab & "STATUS" & tab & "DESTINATION_COUNT" & tab & "DESTINATION_READ" & tab & "DESTINATION_IDENTITY" & tab & "BARRIER_ATTEMPTS"}
 	repeat with itemNumber from 1 to itemCount
 		set argumentOffset to 5 + ((itemNumber - 1) * 6)
 		set expectedMailID to item argumentOffset of argv as integer
@@ -215,7 +240,7 @@ on run argv
 		set destinationCount to item 1 of destinationResult
 		set destinationRead to item 2 of destinationResult
 		set destinationIdentity to destinationCount is 1 and destinationRead is expectedRead
-		set end of outputLines to (expectedMailID as text) & tab & (item itemNumber of statuses) & tab & (destinationCount as text) & tab & destinationRead & tab & (destinationIdentity as text)
+		set end of outputLines to (expectedMailID as text) & tab & (item itemNumber of statuses) & tab & (destinationCount as text) & tab & destinationRead & tab & (destinationIdentity as text) & tab & (barrierAttempts as text)
 	end repeat
 	set AppleScript's text item delimiters to linefeed
 	set outputText to outputLines as text

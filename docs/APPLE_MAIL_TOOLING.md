@@ -120,6 +120,11 @@ the copy script's resolution, identity, candidate, and selector-count path,
 reports missing and reused copies, then exits before `duplicate`. Gmail
 transfer transactions are capped at ten messages.
 
+During execution, the copy script rechecks destination visibility on a fixed,
+bounded schedule for at most 6.3 seconds after `duplicate`. It reports
+`pending_local_copy` without changing Gmail when Mail still has not exposed
+every exact copy.
+
 `apply` is a dry run unless `--execute` is present. Execution requires an audit
 path. Destination-bearing plans require an exact allowlist on both dry run and
 execution. `set_read` has no destination allowlist.
