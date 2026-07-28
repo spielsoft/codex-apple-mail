@@ -40,10 +40,12 @@ class AppleMailMetadataTests(unittest.TestCase):
         )
 
         self.assertEqual(rows[0]["FLAGGED"], "true")
-        self.assertEqual(rows[0]["FLAG_INDEX"], "0")
+        self.assertEqual(rows[0]["FLAG_INDEX"], 0)
         self.assertEqual(rows[0]["FLAG_COLOR"], "red")
+        self.assertEqual(rows[1]["FLAG_INDEX"], 3)
         self.assertEqual(rows[1]["FLAG_COLOR"], "green")
         self.assertEqual(rows[2]["FLAGGED"], "false")
+        self.assertEqual(rows[2]["FLAG_INDEX"], -1)
         self.assertEqual(rows[2]["FLAG_COLOR"], "none")
         self.assertNotIn("FLAG_COLOR", rows[3])
 

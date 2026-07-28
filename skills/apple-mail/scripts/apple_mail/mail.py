@@ -1,7 +1,7 @@
 import csv
 import subprocess
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Any, Dict, Iterable, List
 
 
 FLAG_INDEX_TO_COLOR = {
@@ -20,7 +20,7 @@ class MailScriptError(RuntimeError):
     pass
 
 
-def flag_color_from_index(value: str) -> str:
+def flag_color_from_index(value: Any) -> str:
     try:
         flag_index = int(value)
     except (TypeError, ValueError):
@@ -44,13 +44,13 @@ def unescape_field(value: str) -> str:
     return "".join(output)
 
 
-def parse_tsv(text: str) -> List[Dict[str, str]]:
+def parse_tsv(text: str) -> List[Dict[str, Any]]:
     lines = [line for line in text.splitlines() if line]
     if not lines:
         return []
     rows = list(csv.reader(lines, delimiter="\t"))
     header = rows[0]
-    parsed: List[Dict[str, str]] = []
+    parsed: List[Dict[str, Any]] = []
     for row in rows[1:]:
         if len(row) < len(header):
             row += [""] * (len(header) - len(row))
@@ -58,6 +58,10 @@ def parse_tsv(text: str) -> List[Dict[str, str]]:
             key: unescape_field(value) for key, value in zip(header, row)
         }
         if record.get("TYPE") == "MESSAGE" and "FLAG_INDEX" in record:
+            try:
+                record["FLAG_INDEX"] = int(record["FLAG_INDEX"])
+            except (TypeError, ValueError):
+                pass
             record["FLAG_COLOR"] = flag_color_from_index(record["FLAG_INDEX"])
         parsed.append(record)
     return parsed
@@ -87,5 +91,5 @@ class MailRunner:
 
     def run_tsv(
         self, script_name: str, arguments: Iterable[str] = ()
-    ) -> List[Dict[str, str]]:
+    ) -> List[Dict[str, Any]]:
         return parse_tsv(self.run_raw(script_name, arguments))
