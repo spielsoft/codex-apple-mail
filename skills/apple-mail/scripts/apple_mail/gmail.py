@@ -21,7 +21,10 @@ from .oauth import TokenStore
 API_ROOT = "https://gmail.googleapis.com/gmail/v1/users/me"
 MUTABLE_SOURCE_LABELS = frozenset({"INBOX", "SPAM"})
 FORBIDDEN_LABEL = "TRASH"
-RECEIVED_AT_TOLERANCE = timedelta(hours=24)
+# Apple Mail and Gmail can expose adjacent-day received timestamps with a
+# small client/server processing skew. Keep this absolute window narrow so the
+# date remains a meaningful corroborator alongside the unique RFC Message-ID.
+RECEIVED_AT_TOLERANCE = timedelta(hours=25)
 
 
 class GmailError(RuntimeError):

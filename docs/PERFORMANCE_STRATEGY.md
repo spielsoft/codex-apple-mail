@@ -14,9 +14,9 @@ are fast but non-durable, so a numeric hit without complete corroboration must
 fail closed.
 
 Gmail `internalDate` is compared to the plan's local-naive `received_at` with
-an absolute tolerance of at most 24 hours. This admits adjacent-midnight
-representations without accepting a wider discrepancy than calendar-date
-comparison previously could.
+an absolute tolerance of at most 25 hours. This admits an adjacent-day
+representation plus a small client/server processing skew without accepting
+the nearly 48-hour discrepancy that calendar-date comparison could allow.
 
 Mail Apple Events must remain serial. Independent Gmail API requests may run
 with at most ten concurrent workers inside a fifty-message transaction. The

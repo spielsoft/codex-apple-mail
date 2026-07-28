@@ -199,9 +199,37 @@ class AppleMailGmailTests(unittest.TestCase):
 
         self.assertEqual(corroboration_mismatches(candidate, item), [])
 
-    def test_received_time_rejects_more_than_24_hours(self):
+    def test_received_time_accepts_adjacent_day_with_small_processing_skew(self):
         expected = datetime(2018, 3, 7, 12, 0)
-        candidate_time = expected + timedelta(hours=24, seconds=1)
+        candidate_time = expected + timedelta(hours=24, minutes=25)
+        candidate = {
+            "internalDate": str(int(candidate_time.timestamp() * 1000)),
+            "payload": {
+                "headers": [
+                    {
+                        "name": "Message-ID",
+                        "value": "<stable@example.com>",
+                    },
+                    {"name": "Subject", "value": "Example"},
+                    {
+                        "name": "From",
+                        "value": "Sender <sender@example.com>",
+                    },
+                ]
+            },
+        }
+        item = {
+            "message_id": "stable@example.com",
+            "subject": "Example",
+            "sender": "Sender <sender@example.com>",
+            "received_at": expected.isoformat(),
+        }
+
+        self.assertEqual(corroboration_mismatches(candidate, item), [])
+
+    def test_received_time_rejects_more_than_25_hours(self):
+        expected = datetime(2018, 3, 7, 12, 0)
+        candidate_time = expected + timedelta(hours=25, seconds=1)
         candidate = {
             "internalDate": str(int(candidate_time.timestamp() * 1000)),
             "payload": {
