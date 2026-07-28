@@ -58,6 +58,24 @@ class AppleMailMetadataTests(unittest.TestCase):
         self.assertNotIn("FLAG_INDEX", rows[0])
         self.assertNotIn("FLAG_COLOR", rows[0])
 
+    def test_get_parser_keeps_multiline_body_in_one_record(self):
+        encoded_body = (
+            "First line\\nSecond line\\r"
+            "Signature\u2028Address\u2029Footer\u0085Postscript"
+        )
+        rows = parse_tsv(
+            "TYPE\tMAIL_ID\tMESSAGE_ID\tBODY\n"
+            "MESSAGE\t101\tgeneric@example.test\t{}\n".format(encoded_body)
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["TYPE"], "MESSAGE")
+        self.assertEqual(
+            rows[0]["BODY"],
+            "First line\nSecond line\r"
+            "Signature\u2028Address\u2029Footer\u0085Postscript",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

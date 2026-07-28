@@ -14,6 +14,7 @@ from apple_mail.operations import (
     apply_gmail_inbox_to_local,
     apply_local_move,
     apply_set_read,
+    verify_messages,
 )
 from apple_mail.plans import (
     account_source,
@@ -98,6 +99,36 @@ class FakeGmailClient:
 
 
 class AppleMailOperationTests(unittest.TestCase):
+    def test_multi_message_verification_uses_six_argument_groups(self):
+        messages = []
+        for index in range(9):
+            message = dict(MESSAGE)
+            message["mail_id"] = 1000 + index
+            message["message_id"] = "stable-{}@example.com".format(index)
+            message["subject"] = "Example {}".format(index)
+            messages.append(message)
+        plan = build_message_plan(
+            "gmail_inbox_to_local",
+            account_source("person@example.com"),
+            messages,
+            destination=local_destination("On My Mac/Review"),
+        )
+        runner = SequencedRunner([[]])
+
+        verify_messages(runner, plan)
+
+        script, arguments = runner.calls[0]
+        self.assertEqual(script, "verify_messages.applescript")
+        self.assertEqual(len(arguments), 5 + (9 * 6))
+        for index, message in enumerate(messages):
+            group_start = 5 + (index * 6)
+            self.assertEqual(arguments[group_start], str(message["mail_id"]))
+            self.assertEqual(
+                arguments[group_start + 1], message["message_id"]
+            )
+            self.assertEqual(arguments[group_start + 2], message["subject"])
+            self.assertEqual(arguments[group_start + 5], "false")
+
     def test_stale_or_mismatched_numeric_id_stops_before_mutation(self):
         plan = build_message_plan(
             "move_local",

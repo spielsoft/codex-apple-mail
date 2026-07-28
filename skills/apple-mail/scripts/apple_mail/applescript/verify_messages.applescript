@@ -90,13 +90,13 @@ on run argv
 	set outputLines to {"MAIL_ID" & tab & "MESSAGE_ID" & tab & "SOURCE_ID_COUNT" & tab & "SOURCE_IDENTITY" & tab & "SOURCE_READ" & tab & "DESTINATION_COUNT" & tab & "DESTINATION_READ"}
 	tell application "Mail"
 		repeat with itemNumber from 1 to itemCount
-			set offset to 6 + ((itemNumber - 1) * 6)
-			set expectedMailID to item offset of argv as integer
-			set expectedMessageID to item (offset + 1) of argv
-			set expectedSubject to item (offset + 2) of argv
-			set expectedSender to item (offset + 3) of argv
-			set datePrefix to item (offset + 4) of argv
-			set expectedRead to item (offset + 5) of argv
+			set argumentOffset to 6 + ((itemNumber - 1) * 6)
+			set expectedMailID to item argumentOffset of argv as integer
+			set expectedMessageID to item (argumentOffset + 1) of argv
+			set expectedSubject to item (argumentOffset + 2) of argv
+			set expectedSender to item (argumentOffset + 3) of argv
+			set datePrefix to item (argumentOffset + 4) of argv
+			set expectedRead to item (argumentOffset + 5) of argv
 			set sourceMatches to messages of sourceMailbox whose id is expectedMailID
 			set sourceIdentity to false
 			set sourceRead to ""

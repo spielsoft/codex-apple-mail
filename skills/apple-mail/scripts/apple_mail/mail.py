@@ -45,7 +45,10 @@ def unescape_field(value: str) -> str:
 
 
 def parse_tsv(text: str) -> List[Dict[str, Any]]:
-    lines = [line for line in text.splitlines() if line]
+    # AppleScripts escape CR and LF inside fields and use LF alone to delimit
+    # protocol records. str.splitlines() is too broad here because it also
+    # treats Unicode line and paragraph separators in message bodies as rows.
+    lines = [line for line in text.split("\n") if line]
     if not lines:
         return []
     rows = list(csv.reader(lines, delimiter="\t"))

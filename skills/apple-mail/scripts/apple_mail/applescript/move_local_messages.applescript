@@ -75,13 +75,13 @@ on run argv
 		set messagesToMove to {}
 		set destinationMessages to messages of destinationMailbox
 		repeat with itemNumber from 1 to itemCount
-			set offset to 4 + ((itemNumber - 1) * 6)
-			set expectedMailID to item offset of argv as integer
-			set expectedMessageID to my normalizedMessageID(item (offset + 1) of argv)
-			set expectedSubject to item (offset + 2) of argv
-			set expectedSender to item (offset + 3) of argv
-			set datePrefix to item (offset + 4) of argv
-			set expectedRead to item (offset + 5) of argv
+			set argumentOffset to 4 + ((itemNumber - 1) * 6)
+			set expectedMailID to item argumentOffset of argv as integer
+			set expectedMessageID to my normalizedMessageID(item (argumentOffset + 1) of argv)
+			set expectedSubject to item (argumentOffset + 2) of argv
+			set expectedSender to item (argumentOffset + 3) of argv
+			set datePrefix to item (argumentOffset + 4) of argv
+			set expectedRead to item (argumentOffset + 5) of argv
 			set sourceMatches to messages of sourceMailbox whose id is expectedMailID
 			if (count of sourceMatches) is not 1 then error "Expected one indexed source match"
 			set sourceMessage to item 1 of sourceMatches
@@ -92,7 +92,7 @@ on run argv
 			if («class isrd» of sourceMessage as text) is not expectedRead then error "Indexed source state check failed"
 			set destinationCount to 0
 			repeat with destinationReference in destinationMessages
-				if my identityMatches(contents of destinationReference, item (offset + 1) of argv, expectedSubject, expectedSender, datePrefix, expectedRead) then set destinationCount to destinationCount + 1
+				if my identityMatches(contents of destinationReference, item (argumentOffset + 1) of argv, expectedSubject, expectedSender, datePrefix, expectedRead) then set destinationCount to destinationCount + 1
 			end repeat
 			if destinationCount is not 0 then error "Destination identity already exists"
 			set end of messagesToMove to sourceMessage

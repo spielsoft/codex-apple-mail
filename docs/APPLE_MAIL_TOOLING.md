@@ -27,7 +27,8 @@ derived `FLAG_COLOR`: `-1` is `none`, and indices `0` through `6` are `red`,
 `orange`, `yellow`, `green`, `blue`, `purple`, and `gray`. Unknown indices are
 reported as `unknown` without discarding the raw value. Listing does not change
 flags. `get` binds by indexed numeric ID, corroborates RFC Message-ID, and
-bounds body output to 100,000 characters.
+bounds body output to 100,000 characters. Embedded body line breaks and Unicode
+line or paragraph separators remain inside one `MESSAGE` record.
 
 ## Selection format
 

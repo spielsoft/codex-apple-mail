@@ -77,13 +77,13 @@ on run argv
 		set messagesToCopy to {}
 		set statuses to {}
 		repeat with itemNumber from 1 to itemCount
-			set offset to 4 + ((itemNumber - 1) * 6)
-			set expectedMailID to item offset of argv as integer
-			set expectedMessageID to item (offset + 1) of argv
-			set expectedSubject to item (offset + 2) of argv
-			set expectedSender to item (offset + 3) of argv
-			set datePrefix to item (offset + 4) of argv
-			set expectedRead to item (offset + 5) of argv
+			set argumentOffset to 4 + ((itemNumber - 1) * 6)
+			set expectedMailID to item argumentOffset of argv as integer
+			set expectedMessageID to item (argumentOffset + 1) of argv
+			set expectedSubject to item (argumentOffset + 2) of argv
+			set expectedSender to item (argumentOffset + 3) of argv
+			set datePrefix to item (argumentOffset + 4) of argv
+			set expectedRead to item (argumentOffset + 5) of argv
 			set sourceMatches to messages of sourceMailbox whose id is expectedMailID
 			if (count of sourceMatches) is not 1 then error "Expected one indexed source match"
 			set sourceMessage to item 1 of sourceMatches
@@ -104,8 +104,8 @@ on run argv
 	end tell
 	set outputLines to {"MAIL_ID" & tab & "STATUS"}
 	repeat with itemNumber from 1 to itemCount
-		set offset to 4 + ((itemNumber - 1) * 6)
-		set end of outputLines to (item offset of argv) & tab & (item itemNumber of statuses)
+		set argumentOffset to 4 + ((itemNumber - 1) * 6)
+		set end of outputLines to (item argumentOffset of argv) & tab & (item itemNumber of statuses)
 	end repeat
 	set AppleScript's text item delimiters to linefeed
 	set outputText to outputLines as text

@@ -22,6 +22,10 @@ entry point.
   --body-limit 50000
 ```
 
+`get` returns one `MESSAGE` record. Its `BODY` field preserves embedded line
+breaks and Unicode line or paragraph separators without creating extra
+records.
+
 Each `MESSAGE` row from `list` includes:
 
 - `FLAGGED`: Mail's existing Boolean flagged state;
