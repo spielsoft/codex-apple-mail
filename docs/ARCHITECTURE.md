@@ -88,7 +88,11 @@ ten messages.
 
 Modify responses must bind the immutable Gmail ID. A complete returned label
 snapshot is authoritative; when Gmail omits `labelIds`, a targeted metadata
-read fills that missing snapshot before the transaction can continue.
+read fills that missing snapshot before the transaction can continue. Those
+idempotent metadata reads use a short bounded retry schedule for transient
+request failures; label mutations are never retried implicitly. A bound
+metadata response with no `labelIds` represents an empty label set, consistent
+with Gmail's omission of empty repeated JSON fields.
 Complete snapshots identify Spam-created `INBOX` labels, gate cleanup, and
 confirm the final state. Explicit resume is available only for the same plan
 and audit after a started-and-failed lifecycle. It verifies every destination

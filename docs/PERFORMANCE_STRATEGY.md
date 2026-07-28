@@ -42,10 +42,12 @@ For Gmail Inbox- or Spam-to-local:
 5. Remove only the action-specific Gmail source label with bounded concurrent
    per-message responses. Bind response IDs and accept complete returned label
    snapshots; issue targeted metadata reads for responses that omit
-   `labelIds`. Spam removal clears any `INBOX` labels found in those complete
-   snapshots. On any failure, restore the complete Inbox or Spam pre-state,
-   then read every ID again before reporting rollback or an unknown mutation
-   state.
+   `labelIds`. Targeted metadata reads use a short bounded retry schedule and
+   treat an omitted empty repeated field as an empty label set; mutation calls
+   are never retried implicitly. Spam removal clears any `INBOX` labels found
+   in those complete snapshots. On any failure, restore the complete Inbox or
+   Spam pre-state, then read every ID again before reporting rollback or an
+   unknown mutation state.
 6. Request one Mail synchronization.
 7. Return `pending_mail_sync` without immediately querying the cache that was
    just asked to synchronize. A later bounded `reconcile` establishes and

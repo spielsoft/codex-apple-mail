@@ -84,8 +84,10 @@ approved generic transaction is:
    one later bounded, audited reconciliation before beginning another
    sequential block.
 
-Rollback is confirmed by one final authoritative read of every planned Gmail
-ID. If those reads cannot establish the final label state, the audit outcome is
+Rollback is confirmed by a final bounded authoritative-read pass over every
+planned Gmail ID. Each idempotent metadata read has a short retry schedule for
+transient request failures; mutation requests are never retried implicitly. If
+those reads cannot establish the final label state, the audit outcome is
 `mutation_state_unknown`; the tool never reports a successful rollback from
 request responses alone.
 

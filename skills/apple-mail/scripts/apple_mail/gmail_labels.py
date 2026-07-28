@@ -1,3 +1,4 @@
+import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Tuple
 
@@ -12,6 +13,9 @@ from .limits import GMAIL_NETWORK_WORKERS, PUBLIC_GMAIL_BATCH_LIMIT
 
 class GmailMutationStateUnknown(GmailError):
     """Raised when authoritative reads cannot establish a mutation outcome."""
+
+
+_AUTHORITATIVE_READ_RETRY_DELAYS = (0.0, 0.25, 1.0)
 
 
 def _message_ids(gmail_messages: Sequence[Dict[str, Any]]) -> List[str]:
@@ -36,8 +40,13 @@ def _metadata_labels(
     if str(message.get("id", "")) != gmail_id:
         raise GmailError("Gmail reconciliation response ID changed")
     raw_labels = message.get("labelIds")
+    # Gmail omits repeated JSON fields when their value is empty. A bound
+    # metadata GET with no labelIds therefore authoritatively represents an
+    # empty label set; a modify response still takes the targeted-GET path.
+    if raw_labels is None:
+        return frozenset()
     if not isinstance(raw_labels, list):
-        raise GmailError("Gmail reconciliation response omitted labels")
+        raise GmailError("Gmail reconciliation response labels are invalid")
     return frozenset(str(label) for label in raw_labels)
 
 
@@ -45,10 +54,16 @@ def _read_labels(
     client: GmailClient, gmail_ids: Sequence[str]
 ) -> List[Optional[FrozenSet[str]]]:
     def read(gmail_id: str) -> Optional[FrozenSet[str]]:
-        try:
-            return _metadata_labels(client, gmail_id)
-        except Exception:
-            return None
+        for delay in _AUTHORITATIVE_READ_RETRY_DELAYS:
+            if delay:
+                time.sleep(delay)
+            try:
+                return _metadata_labels(client, gmail_id)
+            except Exception:
+                # Metadata reads are idempotent. Retry only this read; never
+                # repeat a label mutation whose response was ambiguous.
+                continue
+        return None
 
     with ThreadPoolExecutor(
         max_workers=min(GMAIL_NETWORK_WORKERS, len(gmail_ids))
