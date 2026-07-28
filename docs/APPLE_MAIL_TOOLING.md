@@ -125,6 +125,11 @@ bounded schedule for at most 6.3 seconds after `duplicate`. It reports
 `pending_local_copy` without changing Gmail when Mail still has not exposed
 every exact copy.
 
+During Mail synchronization, an indexed read can transiently fail with Mail
+error `-10000`. Verification retries only that exact read after 0.1, 0.2, 0.4,
+and 0.8 seconds. A fifth failure and every other unexpected Mail error still
+propagate; `-10000` is never treated as proof that a source is absent.
+
 `apply` is a dry run unless `--execute` is present. Execution requires an audit
 path. Destination-bearing plans require an exact allowlist on both dry run and
 execution. `set_read` has no destination allowlist.

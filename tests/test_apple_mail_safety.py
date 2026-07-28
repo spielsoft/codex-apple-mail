@@ -66,6 +66,21 @@ class AppleMailSafetyTests(unittest.TestCase):
                 source,
             )
 
+    def test_verify_retries_transient_mail_handler_failure_but_never_normalizes_it(self):
+        source = (
+            APPLESCRIPTS / "verify_messages.applescript"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "set retryDelays to {0.1, 0.2, 0.4, 0.8}", source
+        )
+        self.assertIn("repeat with attemptNumber from 1 to 5", source)
+        self.assertIn(
+            "if errorNumber is -10000 and attemptNumber < 5 then", source
+        )
+        self.assertNotIn(
+            "if errorNumber is -10000 then return {}", source
+        )
+
     def test_bulk_copy_and_move_use_direct_mail_specifiers(self):
         copy_source = MUTATION_SCRIPTS[0].read_text(encoding="utf-8")
         move_source = MUTATION_SCRIPTS[1].read_text(encoding="utf-8")

@@ -107,14 +107,20 @@ on identityMatches(theMessage, expectedMessageID, expectedSubject, expectedSende
 end identityMatches
 
 on indexedMessages(sourceMailbox, expectedMailID)
-	tell application "Mail"
+	set retryDelays to {0.1, 0.2, 0.4, 0.8}
+	repeat with attemptNumber from 1 to 5
 		try
-			return messages of sourceMailbox whose id is expectedMailID
+			tell application "Mail" to return messages of sourceMailbox whose id is expectedMailID
 		on error errorMessage number errorNumber
 			if errorNumber is -1719 then return {}
-			error errorMessage number errorNumber
+			if errorNumber is -10000 and attemptNumber < 5 then
+				delay (item attemptNumber of retryDelays)
+			else
+				error errorMessage number errorNumber
+			end if
 		end try
-	end tell
+	end repeat
+	error "Indexed source lookup exhausted its retry bound"
 end indexedMessages
 
 on destinationState(destinationMessages, destinationMessageIDs, expectedMessageID, expectedSubject, expectedSender, datePrefix)
