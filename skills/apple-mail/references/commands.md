@@ -44,16 +44,17 @@ in the normal workspace sandbox.
 `get` returns one `MESSAGE` record. Its `BODY` field preserves embedded line
 breaks and Unicode line or paragraph separators without creating extra
 records. `get-batch` returns one ordered `MESSAGE` record per selected identity,
-accepts at most ten messages, and validates every identity before retrieving
+accepts at most fifty messages, and validates every identity before retrieving
 any body. Without OAuth arguments it uses one serial AppleScript process. With
-both OAuth arguments it verifies the authenticated profile, resolves the ten
-Gmail identities concurrently, completes the metadata/read-state barrier, and
-then retrieves the bodies concurrently. It emits the same record schema and
-does not change Gmail or Mail. When Gmail exposes selected text only through
-an attachment identifier, the tool does not retrieve attachment content. It
-falls back to one bounded Mail batch after the completed Gmail identity
-barrier. Authentication, network, and identity failures do not trigger this
-fallback. Do not parallelize singleton `get` calls against Mail.
+both OAuth arguments it verifies the authenticated profile, resolves all
+selected Gmail identities with at most ten concurrent requests, completes the
+metadata/read-state barrier, and then retrieves the bodies with the same
+concurrency cap. It emits the same record schema and does not change Gmail or
+Mail. When Gmail exposes selected text only through an attachment identifier,
+the tool does not retrieve attachment content. It falls back to one bounded
+Mail batch after the completed Gmail identity barrier. Authentication, network,
+and identity failures do not trigger this fallback. Do not parallelize
+singleton `get` calls against Mail.
 
 `get-batch` retains `ATTACHMENT_COUNT` and adds
 `ATTACHMENT_COUNT_SOURCE`. A source of `apple_mail` means Mail's native
@@ -151,10 +152,11 @@ Use a list or an object containing `messages`, `items`, or `records`:
 
 Read-state plans omit `--allow-destination`. All execution requires `--audit`.
 Gmail execution additionally requires `--token` and `--expected-account`.
-Read-only Gmail resolution and per-message `INBOX` label changes are bounded
-to ten and use concurrent network requests. Label removal still requires one
-confirmed response per message; if any request fails, every confirmed change
-is rolled back before the command reports failure.
+Read-only Gmail resolution and per-message `INBOX` label changes accept at
+most fifty selected messages and use at most ten concurrent network requests.
+Label removal still requires one confirmed response per message; if any
+request fails, every confirmed change is rolled back before the command
+reports failure.
 Verification reports separate source match Booleans for Message-ID, subject,
 sender, and received time. A failed mutation preflight names only the plan item
 positions and mismatched field names; it does not print message content.
@@ -164,12 +166,15 @@ Mail error `-10000` is retried only for the same indexed read on the bounded
 0.1, 0.2, 0.4, and 0.8 second schedule. A persistent failure remains an error
 and is never interpreted as source absence.
 `probe-copy` is valid only for a Gmail Inbox-to-local plan. It executes the
-copy AppleScript's one bounded source-selector resolution, in-memory identity
+copy AppleScript's bounded source-selector resolution, in-memory identity
 corroboration, destination candidate, and selector-count path, reports
 copied/reused aggregate counts, and exits before `duplicate`. Gmail transfer
-plans are intentionally capped at ten messages per transaction. Execution
-checks destination visibility after fixed 1.5 and 4.8 second delays for at
-most 6.3 seconds after `duplicate`; it never polls continuously.
+plans are capped at fifty messages per transaction. Mail copy and verification
+work is split into ordered chunks of at most ten messages; Gmail label removal
+does not begin until the local-copy barrier has passed for every chunk.
+Execution checks each submitted chunk's destination visibility after fixed 1.5
+and 4.8 second delays for at most 6.3 seconds after `duplicate`; it never polls
+continuously.
 
 After confirmed Gmail label removal, execution requests one Mail
 synchronization and returns `pending_mail_sync` without launching a

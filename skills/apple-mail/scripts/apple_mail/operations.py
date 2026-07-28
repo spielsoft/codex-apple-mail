@@ -9,6 +9,11 @@ from .gmail import (
     resolve_messages_parallel,
 )
 from .gmail_labels import remove_inbox_labels_with_rollback
+from .limits import (
+    MAIL_TRANSPORT_CHUNK_SIZE,
+    PUBLIC_GMAIL_BATCH_LIMIT,
+    chunks,
+)
 from .mail import MailRunner
 from .plans import require_allowed_destination, validate_plan
 
@@ -43,20 +48,64 @@ def _source_arguments(source: Dict[str, str]) -> List[str]:
     return ["local", "", source["path"]]
 
 
-def verify_messages(
-    runner: MailRunner, plan: Dict[str, Any]
+def _verify_message_group(
+    runner: MailRunner,
+    plan: Dict[str, Any],
+    messages: Sequence[Dict[str, Any]],
 ) -> List[Dict[str, str]]:
-    validate_plan(plan)
-    if "messages" not in plan:
-        raise OperationError("Mailbox creation plans have no messages to verify")
     destination = plan.get("destination")
     arguments = _source_arguments(plan["source"])
     if destination:
         arguments.extend(["local", destination["path"]])
     else:
         arguments.extend(["none", ""])
-    arguments.extend(_message_arguments(plan["messages"]))
+    arguments.extend(_message_arguments(messages))
     return runner.run_tsv("verify_messages.applescript", arguments)
+
+
+def verify_messages(
+    runner: MailRunner, plan: Dict[str, Any]
+) -> List[Dict[str, str]]:
+    validate_plan(plan)
+    if "messages" not in plan:
+        raise OperationError("Mailbox creation plans have no messages to verify")
+    messages = plan["messages"]
+    if (
+        plan["action"] != "gmail_inbox_to_local"
+        or len(messages) <= MAIL_TRANSPORT_CHUNK_SIZE
+    ):
+        return _verify_message_group(runner, plan, messages)
+
+    rows: List[Dict[str, str]] = []
+    source_bulk_count = 0
+    for message_group in chunks(messages):
+        group_rows = _verify_message_group(runner, plan, message_group)
+        if len(group_rows) != len(message_group):
+            raise OperationError(
+                "Chunked verification returned an unexpected result count"
+            )
+        group_bulk_counts = {
+            row.get("SOURCE_BULK_COUNT", "") for row in group_rows
+        }
+        if len(group_bulk_counts) != 1:
+            raise OperationError(
+                "Chunked verification returned inconsistent selector counts"
+            )
+        try:
+            group_bulk_count = int(next(iter(group_bulk_counts)))
+        except (TypeError, ValueError) as error:
+            raise OperationError(
+                "Chunked verification returned an invalid selector count"
+            ) from error
+        if group_bulk_count < 0 or group_bulk_count > len(message_group):
+            raise OperationError(
+                "Chunked verification returned an invalid selector count"
+            )
+        source_bulk_count += group_bulk_count
+        rows.extend(group_rows)
+    for row in rows:
+        row["SOURCE_BULK_COUNT"] = str(source_bulk_count)
+    return rows
 
 
 def probe_account_to_local_copy(
@@ -65,19 +114,60 @@ def probe_account_to_local_copy(
     validate_plan(plan)
     if plan["action"] != "gmail_inbox_to_local":
         raise OperationError("Plan is not a Gmail Inbox-to-local transfer")
-    if len(plan["messages"]) > 10:
-        raise OperationError("Gmail transfer batch size cannot exceed 10 messages")
-    arguments = [
-        "probe",
-        plan["source"]["account"],
-        plan["source"]["mailbox"],
-        plan["destination"]["path"],
-    ]
-    arguments.extend(_message_arguments(plan["messages"]))
-    rows = runner.run_tsv("copy_account_to_local.applescript", arguments)
-    if len(rows) != 1 or rows[0].get("MODE") != "probe":
-        raise OperationError("Copy preflight probe returned an unexpected result")
-    return rows[0]
+    if len(plan["messages"]) > PUBLIC_GMAIL_BATCH_LIMIT:
+        raise OperationError(
+            "Gmail transfer batch size cannot exceed {} messages".format(
+                PUBLIC_GMAIL_BATCH_LIMIT
+            )
+        )
+    totals = {
+        "ITEM_COUNT": 0,
+        "COPY_COUNT": 0,
+        "REUSED_COUNT": 0,
+        "MISSING_COPY_COUNT": 0,
+        "SOURCE_SELECTOR_COUNT": 0,
+    }
+    ready = True
+    source_resolved = True
+    destination_resolved = True
+    for message_group in chunks(plan["messages"]):
+        arguments = [
+            "probe",
+            plan["source"]["account"],
+            plan["source"]["mailbox"],
+            plan["destination"]["path"],
+        ]
+        arguments.extend(_message_arguments(message_group))
+        rows = runner.run_tsv(
+            "copy_account_to_local.applescript", arguments
+        )
+        if len(rows) != 1 or rows[0].get("MODE") != "probe":
+            raise OperationError(
+                "Copy preflight probe returned an unexpected result"
+            )
+        row = rows[0]
+        try:
+            for field in totals:
+                totals[field] += int(row[field])
+        except (KeyError, TypeError, ValueError) as error:
+            raise OperationError(
+                "Copy preflight probe returned an invalid count"
+            ) from error
+        ready = ready and row.get("READY") == "true"
+        source_resolved = (
+            source_resolved and row.get("SOURCE_RESOLVED") == "true"
+        )
+        destination_resolved = (
+            destination_resolved
+            and row.get("DESTINATION_RESOLVED") == "true"
+        )
+    return {
+        "MODE": "probe",
+        **{field: str(value) for field, value in totals.items()},
+        "SOURCE_RESOLVED": _bool_text(source_resolved),
+        "DESTINATION_RESOLVED": _bool_text(destination_resolved),
+        "READY": _bool_text(ready),
+    }
 
 
 def _source_mismatches(
@@ -374,8 +464,12 @@ def apply_gmail_inbox_to_local(
     require_allowed_destination(plan, allowed_destinations)
     if plan["action"] != "gmail_inbox_to_local":
         raise OperationError("Plan is not a Gmail Inbox-to-local transfer")
-    if len(plan["messages"]) > 10:
-        raise OperationError("Gmail transfer batch size cannot exceed 10 messages")
+    if len(plan["messages"]) > PUBLIC_GMAIL_BATCH_LIMIT:
+        raise OperationError(
+            "Gmail transfer batch size cannot exceed {} messages".format(
+                PUBLIC_GMAIL_BATCH_LIMIT
+            )
+        )
     phase_started = perf_counter()
     profile = client.profile()
     phase_seconds["gmail_profile"] = _elapsed(phase_started)
@@ -401,18 +495,34 @@ def apply_gmail_inbox_to_local(
             "message_count": len(plan["messages"]),
         },
     )
-    arguments = [
-        "apply",
-        plan["source"]["account"],
-        plan["source"]["mailbox"],
-        plan["destination"]["path"],
-    ]
-    arguments.extend(_message_arguments(plan["messages"]))
     phase_started = perf_counter()
-    copied = runner.run_tsv("copy_account_to_local.applescript", arguments)
+    copied: List[Dict[str, str]] = []
+    copy_barrier_valid = True
+    copy_barrier_attempts = 0
+    for message_group in chunks(plan["messages"]):
+        arguments = [
+            "apply",
+            plan["source"]["account"],
+            plan["source"]["mailbox"],
+            plan["destination"]["path"],
+        ]
+        arguments.extend(_message_arguments(message_group))
+        group_rows = runner.run_tsv(
+            "copy_account_to_local.applescript", arguments
+        )
+        copied.extend(group_rows)
+        copy_barrier_attempts += _copy_barrier_summary(group_rows)[
+            "local_copy_barrier_attempts"
+        ]
+        if not _copy_barrier_is_valid(group_rows, message_group):
+            copy_barrier_valid = False
+            break
     phase_seconds["local_copy"] = _elapsed(phase_started)
     copy_summary = _copy_barrier_summary(copied)
-    if not _copy_barrier_is_valid(copied, plan["messages"]):
+    copy_summary["local_copy_barrier_attempts"] = copy_barrier_attempts
+    if not copy_barrier_valid or not _copy_barrier_is_valid(
+        copied, plan["messages"]
+    ):
         phase_seconds["transaction_total"] = _elapsed(transaction_started)
         result = {
             "status": "pending_local_copy",

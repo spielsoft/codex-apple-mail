@@ -1,6 +1,7 @@
 import base64
 import sys
 import threading
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -324,6 +325,10 @@ class AppleMailGmailTests(unittest.TestCase):
             def __init__(self):
                 self.metadata_count = 0
                 self.full_calls = 0
+                self.active_metadata = 0
+                self.max_active_metadata = 0
+                self.active_full = 0
+                self.max_active_full = 0
                 self.lock = threading.Lock()
 
             def list_by_rfc_message_id(self, message_id):
@@ -362,18 +367,36 @@ class AppleMailGmailTests(unittest.TestCase):
 
             def get_metadata(self, gmail_id):
                 with self.lock:
-                    self.metadata_count += 1
-                return self._message(gmail_id)
+                    self.active_metadata += 1
+                    self.max_active_metadata = max(
+                        self.max_active_metadata, self.active_metadata
+                    )
+                try:
+                    time.sleep(0.005)
+                    return self._message(gmail_id)
+                finally:
+                    with self.lock:
+                        self.metadata_count += 1
+                        self.active_metadata -= 1
 
             def get_full(self, gmail_id):
                 with self.lock:
-                    if self.metadata_count != 10:
+                    if self.metadata_count != 50:
                         raise AssertionError("body fetched before metadata barrier")
                     self.full_calls += 1
-                return self._message(
-                    gmail_id,
-                    "Line one\nLine two for {}".format(gmail_id),
-                )
+                    self.active_full += 1
+                    self.max_active_full = max(
+                        self.max_active_full, self.active_full
+                    )
+                try:
+                    time.sleep(0.005)
+                    return self._message(
+                        gmail_id,
+                        "Line one\nLine two for {}".format(gmail_id),
+                    )
+                finally:
+                    with self.lock:
+                        self.active_full -= 1
 
         items = [
             {
@@ -384,11 +407,15 @@ class AppleMailGmailTests(unittest.TestCase):
                 "received_at": "2018-03-07T12:00:00",
                 "read": bool(index % 2),
             }
-            for index in range(10)
+            for index in range(50)
         ]
         client = BatchClient()
         records = get_message_records_parallel(client, items, body_limit=100000)
-        self.assertEqual(client.full_calls, 10)
+        self.assertEqual(client.full_calls, 50)
+        self.assertLessEqual(client.max_active_metadata, 10)
+        self.assertLessEqual(client.max_active_full, 10)
+        self.assertGreater(client.max_active_metadata, 1)
+        self.assertGreater(client.max_active_full, 1)
         self.assertEqual(
             [record["MAIL_ID"] for record in records],
             [str(item["mail_id"]) for item in items],

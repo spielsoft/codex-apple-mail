@@ -10,6 +10,7 @@ from .gmail import (
     get_message_records_parallel,
 )
 from .gmail_labels import GmailMutationStateUnknown
+from .limits import PUBLIC_GMAIL_BATCH_LIMIT
 from .mail import MailRunner
 from .oauth import TokenStore, authorize_desktop
 from .operations import (
@@ -143,8 +144,12 @@ def command_get_batch(args: argparse.Namespace) -> None:
         target_read=True,
     )
     messages = plan["messages"]
-    if len(messages) > 10:
-        raise ValueError("Body batch size cannot exceed 10 messages")
+    if len(messages) > PUBLIC_GMAIL_BATCH_LIMIT:
+        raise ValueError(
+            "Body batch size cannot exceed {} messages".format(
+                PUBLIC_GMAIL_BATCH_LIMIT
+            )
+        )
     token = getattr(args, "token", None)
     if token is not None:
         expected_account = getattr(args, "expected_account", None)
@@ -197,8 +202,12 @@ def command_get_batch(args: argparse.Namespace) -> None:
 
 def command_plan_transfer(args: argparse.Namespace) -> None:
     records = _selection_records(args.selection)
-    if len(records) > 10:
-        raise ValueError("Gmail transfer batch size cannot exceed 10 messages")
+    if len(records) > PUBLIC_GMAIL_BATCH_LIMIT:
+        raise ValueError(
+            "Gmail transfer batch size cannot exceed {} messages".format(
+                PUBLIC_GMAIL_BATCH_LIMIT
+            )
+        )
     plan = build_message_plan(
         "gmail_inbox_to_local",
         account_source(args.account, "INBOX"),

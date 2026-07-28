@@ -51,15 +51,15 @@ reported as `unknown` without discarding the raw value. Listing does not change
 flags. `get` binds by indexed numeric ID, corroborates RFC Message-ID, and
 bounds body output to 100,000 characters. Embedded body line breaks and Unicode
 line or paragraph separators remain inside one `MESSAGE` record. `get-batch`
-validates up to ten selected identities in one Mail process before retrieving
+validates up to fifty selected identities in one Mail process before retrieving
 their bodies; use it instead of concurrent singleton reads. When a Gmail token
 and expected account are supplied, it instead uses bounded concurrent Gmail
-API calls, with a complete metadata/read-state barrier before any full body is
-fetched. If Gmail represents a selected text body only through an attachment
-identifier, the request layer does not fetch that attachment; after the Gmail
-identity barrier succeeds, `get-batch` falls back to the same bounded Mail
-batch rather than returning an incomplete body. Other Gmail failures remain
-errors and do not trigger fallback.
+API calls capped at ten workers, with a complete metadata/read-state barrier
+before any full body is fetched. If Gmail represents a selected text body only
+through an attachment identifier, the request layer does not fetch that
+attachment; after the Gmail identity barrier succeeds, `get-batch` falls back
+to the same bounded Mail batch rather than returning an incomplete body. Other
+Gmail failures remain errors and do not trigger fallback.
 
 `ATTACHMENT_COUNT_SOURCE` identifies how `get-batch` produced
 `ATTACHMENT_COUNT`: `apple_mail` is Mail's native attachment object count and
@@ -141,14 +141,17 @@ scripts/apple-mail probe-copy --plan local-artifacts/transfer-plan.json
 `probe-copy` is a read-only diagnostic for Gmail transfer plans. It exercises
 the copy script's resolution, identity, candidate, and selector-count path,
 reports missing and reused copies, then exits before `duplicate`. Gmail
-transfer transactions are capped at ten messages.
+transfer transactions are capped at fifty messages. The Python transaction
+orchestrator splits Mail copy and verification work into ordered chunks of at
+most ten messages, while keeping the plan, audit, Gmail identity barrier, and
+Gmail label rollback as one fifty-message transaction.
 
-During execution, the copy script resolves the complete bounded numeric-ID
-selector once, validates every source, and rechecks destination visibility
-after fixed 1.5 and 4.8 second delays for at most 6.3 seconds after
-`duplicate`. It stops after the first complete snapshot and reports
-`pending_local_copy` without changing Gmail when Mail still has not exposed
-every exact copy.
+During execution, each copy-script invocation resolves its complete bounded
+numeric-ID selector once, validates every source, and rechecks destination
+visibility after fixed 1.5 and 4.8 second delays for at most 6.3 seconds after
+`duplicate`. It stops after the first complete snapshot. Any incomplete chunk
+returns `pending_local_copy` without changing Gmail; a later retry safely
+reuses exact local copies already accepted from earlier chunks.
 
 Execution reports `phase_seconds` for Gmail profile lookup, Gmail preflight,
 local copy, Gmail label removal, Mail synchronization, and total transaction

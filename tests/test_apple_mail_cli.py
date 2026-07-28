@@ -10,7 +10,11 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "skills" / "apple-mail" / "scripts"))
 
-from apple_mail.cli import command_apply, command_get_batch
+from apple_mail.cli import (
+    command_apply,
+    command_get_batch,
+    command_plan_transfer,
+)
 from apple_mail.gmail import GmailBodyUnavailable, GmailError
 from apple_mail.gmail_labels import GmailMutationStateUnknown
 from apple_mail.plans import (
@@ -72,15 +76,62 @@ class AppleMailCliTests(unittest.TestCase):
             ])
             self.assertEqual(records[0]["ATTACHMENT_COUNT_SOURCE"], "apple_mail")
 
-    def test_get_batch_rejects_more_than_ten_messages(self):
+    def test_get_batch_accepts_fifty_messages_in_one_mail_process(self):
         with tempfile.TemporaryDirectory() as temporary:
             selection = Path(temporary) / "selection.json"
             selection.write_text(
-                json.dumps([message(index) for index in range(11)]),
+                json.dumps([message(index) for index in range(50)]),
                 encoding="utf-8",
             )
-            with self.assertRaisesRegex(ValueError, "cannot exceed 10"):
+            with (
+                patch("apple_mail.cli.MailRunner") as runner_class,
+                patch("apple_mail.cli._print_json"),
+            ):
                 command_get_batch(self._args(selection))
+
+            runner_class.return_value.run_tsv.assert_called_once()
+            script, arguments = runner_class.return_value.run_tsv.call_args.args
+            self.assertEqual(script, "get_messages.applescript")
+            self.assertEqual(len(arguments), 4 + (50 * 6))
+
+    def test_get_batch_rejects_more_than_fifty_messages(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            selection = Path(temporary) / "selection.json"
+            selection.write_text(
+                json.dumps([message(index) for index in range(51)]),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "cannot exceed 50"):
+                command_get_batch(self._args(selection))
+
+    def test_transfer_plan_accepts_fifty_and_rejects_fifty_one(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            selection = root / "selection.json"
+            output = root / "plan.json"
+            args = argparse.Namespace(
+                account="person@example.com",
+                destination="On My Mac/Review",
+                selection=selection,
+                output=output,
+            )
+            selection.write_text(
+                json.dumps([message(index) for index in range(50)]),
+                encoding="utf-8",
+            )
+            with patch("apple_mail.cli._print_json"):
+                command_plan_transfer(args)
+            self.assertEqual(
+                len(json.loads(output.read_text(encoding="utf-8"))["messages"]),
+                50,
+            )
+
+            selection.write_text(
+                json.dumps([message(index) for index in range(51)]),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "cannot exceed 50"):
+                command_plan_transfer(args)
 
     def test_get_batch_uses_oauth_backend_without_calling_mail(self):
         with tempfile.TemporaryDirectory() as temporary:

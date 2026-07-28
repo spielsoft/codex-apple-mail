@@ -119,7 +119,7 @@ on run argv
 	set bodyLimit to item 4 of argv as integer
 	if bodyLimit < 0 or bodyLimit > 100000 then error "Body limit is outside the supported range"
 	set itemCount to ((count of argv) - 4) div 6
-	if itemCount < 1 or itemCount > 10 then error "Body batch size is outside the supported range"
+	if itemCount < 1 or itemCount > 50 then error "Body batch size is outside the supported range"
 	set targetMessages to {}
 
 	repeat with itemNumber from 1 to itemCount

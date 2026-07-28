@@ -34,11 +34,13 @@ Every message plan carries:
 - durable RFC Message-ID; and
 - subject, sender, received date, and read-state corroborators.
 
-A batch binds by numeric ID, validates all corroborators, then submits one
-numeric-ID-filtered Mail object specifier to the bulk `duplicate` or `move`
-command. A materialized AppleScript list is not a Mail object specifier and
-must not be used as the command's direct parameter. Capture the candidate
-count before padding a selector list: AppleScript list concatenation can retain
+A batch binds by numeric ID and validates all corroborators. Gmail transfers
+then submit ordered internal chunks of at most ten numeric-ID-filtered Mail
+object specifiers to bulk `duplicate`; Gmail label mutation waits until every
+chunk's local-copy barrier passes. Local moves retain their single bounded
+bulk `move`. A materialized AppleScript list is not a Mail object specifier and
+must not be used as the command's direct parameter. Capture the candidate count
+before padding a selector list: AppleScript list concatenation can retain
 shared mutable backing. The implementation never scans a large source once per
 RFC Message-ID.
 
@@ -58,7 +60,8 @@ requires `--execute`; destination-bearing plans also require an exact
 AppleScript cross-store `move` does not reliably remove Gmail's `INBOX` label.
 The copy script resolves one bounded numeric-ID selector, validates every
 source from that result, bulk-copies missing local messages, and verifies the
-complete destination. The transaction then removes only Gmail `INBOX` and
+complete destination. Plans above ten messages invoke this copy boundary in
+ordered ten-message chunks. The transaction then removes only Gmail `INBOX` and
 requests one Mail synchronization. It returns `pending_mail_sync` rather than
 immediately querying the cache that it just asked to synchronize; one later
 bounded, audited reconciliation gates the next sequential block.
@@ -73,9 +76,10 @@ mutation rolls back by authoritatively reading every planned Gmail ID, adding
 `INBOX` where removal is observed or the initial state cannot be read, and
 reading the complete batch again. An unreadable final label state is audited
 as `mutation_state_unknown`, never as a confirmed rollback. Gmail lookup and
-label requests may run concurrently within the fixed ten-message bound, but
-each label change still requires its own confirmed outcome. Mail Apple Events
-remain serial.
+label requests accept a fifty-message transaction but use at most ten
+concurrent workers; each label change still requires its own confirmed
+outcome. Mail Apple Events remain serial and transfer selectors are chunked at
+ten messages.
 
 After `INBOX` removal, Mail can raise error `-1719` while an indexed source
 filter is disappearing instead of returning an empty collection. The indexed

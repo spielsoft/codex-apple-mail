@@ -2,6 +2,7 @@ import tempfile
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(
@@ -71,6 +72,17 @@ def copy_barrier(destination_count="1", identity="true"):
             "BARRIER_ATTEMPTS": "2",
         }
     ]
+
+
+def messages(count):
+    result = []
+    for index in range(count):
+        item = dict(MESSAGE)
+        item["mail_id"] = 1000 + index
+        item["message_id"] = "stable-{}@example.com".format(index)
+        item["subject"] = "Example {}".format(index)
+        result.append(item)
+    return result
 
 
 class SequencedRunner:
@@ -431,17 +443,11 @@ class AppleMailOperationTests(unittest.TestCase):
                 )
 
     def test_gmail_transfer_batch_limit_stops_before_external_io(self):
-        messages = []
-        for index in range(11):
-            item = dict(MESSAGE)
-            item["mail_id"] = 1000 + index
-            item["message_id"] = "stable-{}@example.com".format(index)
-            item["subject"] = "Example {}".format(index)
-            messages.append(item)
+        selected_messages = messages(51)
         plan = build_message_plan(
             "gmail_inbox_to_local",
             account_source("person@example.com"),
-            messages,
+            selected_messages,
             destination=local_destination("On My Mac/Review"),
         )
         runner = SequencedRunner()
@@ -450,7 +456,7 @@ class AppleMailOperationTests(unittest.TestCase):
             def profile(self):
                 raise AssertionError("Gmail I/O must not start")
 
-        with self.assertRaisesRegex(OperationError, "cannot exceed 10"):
+        with self.assertRaisesRegex(OperationError, "cannot exceed 50"):
             apply_gmail_inbox_to_local(
                 runner,
                 UnexpectedGmailIO(),
@@ -460,6 +466,248 @@ class AppleMailOperationTests(unittest.TestCase):
             )
 
         self.assertEqual(runner.calls, [])
+
+    def test_fifty_message_transfer_uses_five_mail_chunks_before_gmail(self):
+        selected_messages = messages(50)
+        plan = build_message_plan(
+            "gmail_inbox_to_local",
+            account_source("person@example.com"),
+            selected_messages,
+            destination=local_destination("On My Mac/Review"),
+        )
+        copy_call_count = 0
+        all_copy_calls_returned = {"value": False}
+
+        class ChunkRunner(SequencedRunner):
+            def run_tsv(self, script, arguments=()):
+                nonlocal copy_call_count
+                self.calls.append((script, list(arguments)))
+                if script != "copy_account_to_local.applescript":
+                    return [{"STATUS": "OK"}]
+                copy_call_count += 1
+                group = []
+                for offset in range(4, len(arguments), 6):
+                    group.append(
+                        {
+                            "MAIL_ID": arguments[offset],
+                            "STATUS": "COPIED",
+                            "DESTINATION_COUNT": "1",
+                            "DESTINATION_READ": arguments[offset + 5],
+                            "DESTINATION_IDENTITY": "true",
+                            "BARRIER_ATTEMPTS": "1",
+                        }
+                    )
+                if copy_call_count == 5:
+                    all_copy_calls_returned["value"] = True
+                return group
+
+        class ScaleClient:
+            def __init__(self):
+                self.modifications = []
+
+            def profile(self):
+                return {"emailAddress": "person@example.com"}
+
+            def list_by_rfc_message_id(self, message_id):
+                index = message_id.split("@", 1)[0].split("-")[-1]
+                return [{"id": "gmail-{}".format(index)}]
+
+            def get_metadata(self, gmail_id):
+                index = int(gmail_id.split("-")[-1])
+                return {
+                    "id": gmail_id,
+                    "labelIds": ["INBOX"],
+                    "payload": {
+                        "headers": [
+                            {
+                                "name": "Message-ID",
+                                "value": "<stable-{}@example.com>".format(index),
+                            },
+                            {
+                                "name": "Subject",
+                                "value": "Example {}".format(index),
+                            },
+                            {
+                                "name": "From",
+                                "value": "Sender <sender@example.com>",
+                            },
+                        ]
+                    },
+                }
+
+            def modify_inbox_label(
+                self, gmail_id, *, add=False, remove=False
+            ):
+                if not all_copy_calls_returned["value"]:
+                    raise AssertionError(
+                        "Gmail mutation began before every Mail chunk completed"
+                    )
+                self.modifications.append((gmail_id, add, remove))
+                return {"id": gmail_id, "labelIds": []}
+
+        runner = ChunkRunner()
+        client = ScaleClient()
+        result = apply_gmail_inbox_to_local(
+            runner,
+            client,
+            plan,
+            expected_account="person@example.com",
+            allowed_destinations=["On My Mac/Review"],
+        )
+
+        copy_calls = [
+            call
+            for call in runner.calls
+            if call[0] == "copy_account_to_local.applescript"
+        ]
+        self.assertEqual(len(copy_calls), 5)
+        self.assertTrue(
+            all(
+                len(arguments) == 4 + (10 * 6)
+                for _, arguments in copy_calls
+            )
+        )
+        self.assertEqual(len(client.modifications), 50)
+        self.assertEqual(result["gmail_inbox_labels_removed"], 50)
+        self.assertEqual(result["local_copies_submitted"], 50)
+        self.assertEqual(result["local_copy_barrier_attempts"], 5)
+
+    def test_invalid_later_copy_chunk_prevents_every_gmail_mutation(self):
+        selected_messages = messages(20)
+        plan = build_message_plan(
+            "gmail_inbox_to_local",
+            account_source("person@example.com"),
+            selected_messages,
+            destination=local_destination("On My Mac/Review"),
+        )
+
+        class LaterFailureRunner(SequencedRunner):
+            def run_tsv(self, script, arguments=()):
+                self.calls.append((script, list(arguments)))
+                copy_number = len(
+                    [
+                        call
+                        for call in self.calls
+                        if call[0] == "copy_account_to_local.applescript"
+                    ]
+                )
+                rows = []
+                for offset in range(4, len(arguments), 6):
+                    rows.append(
+                        {
+                            "MAIL_ID": arguments[offset],
+                            "STATUS": "COPIED",
+                            "DESTINATION_COUNT": (
+                                "0" if copy_number == 2 else "1"
+                            ),
+                            "DESTINATION_READ": arguments[offset + 5],
+                            "DESTINATION_IDENTITY": (
+                                "false" if copy_number == 2 else "true"
+                            ),
+                            "BARRIER_ATTEMPTS": "2",
+                        }
+                    )
+                return rows
+
+        runner = LaterFailureRunner()
+        client = FakeGmailClient()
+        resolved = [
+            {"id": "gmail-{}".format(index), "labelIds": ["INBOX"]}
+            for index in range(20)
+        ]
+        with (
+            patch(
+                "apple_mail.operations.resolve_messages_parallel",
+                return_value=resolved,
+            ),
+            patch(
+                "apple_mail.operations.remove_inbox_labels_with_rollback"
+            ) as remove_labels,
+        ):
+            result = apply_gmail_inbox_to_local(
+                runner,
+                client,
+                plan,
+                expected_account="person@example.com",
+                allowed_destinations=["On My Mac/Review"],
+            )
+
+        self.assertEqual(result["status"], "pending_local_copy")
+        self.assertEqual(result["local_copies_submitted"], 20)
+        self.assertEqual(result["local_copy_barrier_attempts"], 4)
+        remove_labels.assert_not_called()
+        self.assertNotIn(
+            "synchronize_account.applescript",
+            [call[0] for call in runner.calls],
+        )
+
+    def test_fifty_message_probe_aggregates_five_mail_chunks(self):
+        selected_messages = messages(50)
+        plan = build_message_plan(
+            "gmail_inbox_to_local",
+            account_source("person@example.com"),
+            selected_messages,
+            destination=local_destination("On My Mac/Review"),
+        )
+
+        class ProbeRunner(SequencedRunner):
+            def run_tsv(self, script, arguments=()):
+                self.calls.append((script, list(arguments)))
+                return [
+                    {
+                        "MODE": "probe",
+                        "ITEM_COUNT": "10",
+                        "COPY_COUNT": "7",
+                        "REUSED_COUNT": "3",
+                        "MISSING_COPY_COUNT": "7",
+                        "SOURCE_SELECTOR_COUNT": "7",
+                        "SOURCE_RESOLVED": "true",
+                        "DESTINATION_RESOLVED": "true",
+                        "READY": "true",
+                    }
+                ]
+
+        runner = ProbeRunner()
+        result = probe_account_to_local_copy(runner, plan)
+
+        self.assertEqual(result["ITEM_COUNT"], "50")
+        self.assertEqual(result["COPY_COUNT"], "35")
+        self.assertEqual(result["REUSED_COUNT"], "15")
+        self.assertEqual(result["SOURCE_SELECTOR_COUNT"], "35")
+        self.assertEqual(result["READY"], "true")
+        self.assertEqual(len(runner.calls), 5)
+
+    def test_fifty_message_verification_normalizes_chunk_bulk_count(self):
+        selected_messages = messages(50)
+        plan = build_message_plan(
+            "gmail_inbox_to_local",
+            account_source("person@example.com"),
+            selected_messages,
+            destination=local_destination("On My Mac/Review"),
+        )
+
+        class VerifyRunner(SequencedRunner):
+            def run_tsv(self, script, arguments=()):
+                self.calls.append((script, list(arguments)))
+                group = []
+                for offset in range(5, len(arguments), 6):
+                    group.append(
+                        {
+                            "MAIL_ID": arguments[offset],
+                            "SOURCE_BULK_COUNT": "10",
+                        }
+                    )
+                return group
+
+        runner = VerifyRunner()
+        rows = verify_messages(runner, plan)
+
+        self.assertEqual(len(runner.calls), 5)
+        self.assertEqual(len(rows), 50)
+        self.assertEqual(
+            {row["SOURCE_BULK_COUNT"] for row in rows},
+            {"50"},
+        )
 
     def test_gmail_transfer_defers_mail_cache_check_to_later_verify(self):
         plan = build_message_plan(

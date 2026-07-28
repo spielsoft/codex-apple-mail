@@ -22,7 +22,7 @@ permission immediately; it does not override the active Codex approval policy.
 
 - For discovery, listing including flag labels, or reading: run a bounded
   read-only command. Prefer one `get-batch` call over concurrent singleton
-  `get` calls when reading two to ten messages from one mailbox. For Gmail
+  `get` calls when reading two to fifty messages from one mailbox. For Gmail
   Inbox and an existing OAuth token, pass `--token` and `--expected-account`
   to use the faster Gmail API backend; otherwise the command uses Mail. If
   Gmail reports that selected text is not inline, the command safely falls
@@ -46,6 +46,8 @@ selection schema.
    `get-batch` corroborates all six selection fields before reading any body.
    Its OAuth backend completes the entire metadata barrier before fetching
    any selected body.
+   Gmail body-read and transfer selections are capped at 50 messages; Gmail
+   network concurrency and Mail transfer selectors remain capped at 10.
 4. Treat numeric IDs as short-lived locators; the tool corroborates durable
    identity before use.
 5. Use `probe-copy` to exercise a Gmail transfer's copy preflight and selector

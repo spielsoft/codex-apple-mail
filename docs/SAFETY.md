@@ -43,7 +43,8 @@ Every mutation must:
    sender, date, and read state before changing anything;
 6. reject stale, missing, duplicate, or ambiguous identities;
 7. operate on one bounded batch, at most 250 messages;
-8. use one bulk Mail command for a batch, not a process per message;
+8. use one bulk Mail command per bounded internal chunk, not a process per
+   message;
 9. verify the local copy barrier before Gmail mutation, request one Mail
    synchronization afterward, and report the cache state as pending until one
    later bounded reconciliation rather than querying or polling immediately;
@@ -81,9 +82,10 @@ request responses alone.
 
 The Gmail request layer allows only profile lookup, message search, bounded
 metadata/full-message reads, and a single-message modification whose sole
-changed label is `INBOX`. Gmail requests may run concurrently only within the
-ten-message transfer/read limit. It rejects other labels, server-side batch
-mutation, unsafe methods, and unsafe endpoints.
+changed label is `INBOX`. Gmail transfer and batch-read selections are capped
+at 50 messages, with at most 10 concurrent network requests and at most 10
+messages in each Mail transfer selector. It rejects other labels, server-side
+batch mutation, unsafe methods, and unsafe endpoints.
 
 The Gmail API response is authoritative server confirmation. If Mail still
 shows a corroborated source message after synchronization, the later

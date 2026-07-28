@@ -8,6 +8,7 @@ from .gmail import (
     GmailError,
     validate_archived_labels,
 )
+from .limits import GMAIL_NETWORK_WORKERS, PUBLIC_GMAIL_BATCH_LIMIT
 
 
 class GmailMutationStateUnknown(GmailError):
@@ -18,8 +19,12 @@ def _message_ids(gmail_messages: Sequence[Dict[str, Any]]) -> List[str]:
     gmail_ids = [str(message["id"]) for message in gmail_messages]
     if not gmail_ids:
         raise GmailError("Gmail mutation batch cannot be empty")
-    if len(gmail_ids) > 10:
-        raise GmailError("Gmail mutation batch cannot exceed 10 messages")
+    if len(gmail_ids) > PUBLIC_GMAIL_BATCH_LIMIT:
+        raise GmailError(
+            "Gmail mutation batch cannot exceed {} messages".format(
+                PUBLIC_GMAIL_BATCH_LIMIT
+            )
+        )
     if len(set(gmail_ids)) != len(gmail_ids):
         raise GmailError("Gmail resolution returned a duplicate message")
     return gmail_ids
@@ -46,7 +51,9 @@ def _read_labels(
         except Exception:
             return None
 
-    with ThreadPoolExecutor(max_workers=len(gmail_ids)) as executor:
+    with ThreadPoolExecutor(
+        max_workers=min(GMAIL_NETWORK_WORKERS, len(gmail_ids))
+    ) as executor:
         return list(executor.map(read, gmail_ids))
 
 
@@ -71,7 +78,9 @@ def _restore_inbox(
             # removal. The authoritative read below determines the outcome.
             pass
 
-    with ThreadPoolExecutor(max_workers=len(restore_ids)) as executor:
+    with ThreadPoolExecutor(
+        max_workers=min(GMAIL_NETWORK_WORKERS, len(restore_ids))
+    ) as executor:
         list(executor.map(restore, restore_ids))
 
 
@@ -128,7 +137,9 @@ def remove_inbox_labels_with_rollback(
         validate_archived_labels(response)
 
     errors: List[Exception] = []
-    with ThreadPoolExecutor(max_workers=len(gmail_ids)) as executor:
+    with ThreadPoolExecutor(
+        max_workers=min(GMAIL_NETWORK_WORKERS, len(gmail_ids))
+    ) as executor:
         futures = [executor.submit(remove, gmail_id) for gmail_id in gmail_ids]
         for future in futures:
             try:

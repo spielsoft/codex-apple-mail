@@ -14,6 +14,7 @@ from .gmail_content import (
     attachment_count,
     message_body,
 )
+from .limits import GMAIL_NETWORK_WORKERS, PUBLIC_GMAIL_BATCH_LIMIT
 from .oauth import TokenStore
 
 
@@ -250,9 +251,15 @@ def resolve_messages_parallel(
     client: GmailClient,
     items: Sequence[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    if not items or len(items) > 10:
-        raise GmailError("Gmail batch size must be between 1 and 10 messages")
-    with ThreadPoolExecutor(max_workers=len(items)) as executor:
+    if not items or len(items) > PUBLIC_GMAIL_BATCH_LIMIT:
+        raise GmailError(
+            "Gmail batch size must be between 1 and {} messages".format(
+                PUBLIC_GMAIL_BATCH_LIMIT
+            )
+        )
+    with ThreadPoolExecutor(
+        max_workers=min(GMAIL_NETWORK_WORKERS, len(items))
+    ) as executor:
         return list(
             executor.map(
                 lambda indexed_item: resolve_unique_message(
@@ -290,7 +297,9 @@ def get_message_records_parallel(
                 mismatched_fields=mismatches,
             )
     gmail_ids = [str(message["id"]) for message in metadata]
-    with ThreadPoolExecutor(max_workers=len(gmail_ids)) as executor:
+    with ThreadPoolExecutor(
+        max_workers=min(GMAIL_NETWORK_WORKERS, len(gmail_ids))
+    ) as executor:
         full_messages = list(executor.map(client.get_full, gmail_ids))
     for item_index, (full_message, item, gmail_id) in enumerate(
         zip(full_messages, items, gmail_ids), start=1
