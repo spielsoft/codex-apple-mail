@@ -67,6 +67,10 @@ selection schema.
 10. If a Gmail transfer is pending synchronization, run one later `reconcile`
    with the same plan and audit; do not repeat the mutation or poll
    continuously. Continue only after reconciliation reports `complete`.
+11. If execution records `operation_failed` or `mutation_state_unknown` after
+    the local-copy barrier, do not reapply normally. Use explicit `--resume`
+    with the same plan and audit; it proceeds only after every destination
+    copy is exact and the audit proves a prior started-and-failed lifecycle.
 
 The tool supplies mechanics only. Apply the user's separate filing or
 retention policy in agent reasoning, not in this skill's code.

@@ -111,6 +111,13 @@ Invalid, unreadable, ambiguous, or numeric-ID-reuse evidence is recorded as
 identity corroboration: the verifier rejects Message-ID collisions and counts
 only complete identity matches.
 
+If execution instead ends in `operation_failed` or
+`mutation_state_unknown` after local copies exist, normal reapplication is
+prohibited. Explicit resume requires the same immutable plan and audit, a
+prior matching started-and-failed lifecycle, and one exact read-preserved
+destination copy for every planned message. It changes only source labels
+that remain present and treats an already-absent source label as completed.
+
 ## Inventory and content
 
 - Begin with `list`, which reads metadata only.

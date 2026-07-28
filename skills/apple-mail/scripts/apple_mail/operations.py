@@ -326,6 +326,66 @@ def _elapsed(started_at: float) -> float:
     return round(perf_counter() - started_at, 3)
 
 
+def _require_recoverable_gmail_audit(
+    audit_path: Optional[Path],
+    plan: Dict[str, Any],
+) -> None:
+    if audit_path is None or not audit_path.is_file():
+        raise OperationError(
+            "Gmail resume requires the existing audit file"
+        )
+    try:
+        events = [
+            json.loads(line)
+            for line in audit_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+    except (OSError, ValueError) as error:
+        raise OperationError("Gmail resume audit is unreadable") from error
+    matching = [
+        event
+        for event in events
+        if (
+            event.get("action") == plan["action"]
+            and event.get("plan_hash") == plan["plan_hash"]
+        )
+    ]
+    if (
+        not matching
+        or matching[-1].get("status")
+        not in ("operation_failed", "mutation_state_unknown")
+        or not any(
+            event.get("status") == "operation_started"
+            for event in matching[:-1]
+        )
+    ):
+        raise OperationError(
+            "Gmail resume requires a prior started and failed audit lifecycle"
+        )
+
+
+def _require_valid_resume_destinations(
+    rows: Sequence[Dict[str, str]],
+    messages: Sequence[Dict[str, Any]],
+) -> None:
+    if len(rows) != len(messages):
+        raise OperationError(
+            "Gmail resume destination verification returned an "
+            "unexpected count"
+        )
+    for row, message in zip(rows, messages):
+        if (
+            row.get("MAIL_ID") != str(message["mail_id"])
+            or row.get("DESTINATION_COUNT") != "1"
+            or row.get("DESTINATION_READ")
+            != _bool_text(bool(message["read"]))
+        ):
+            raise OperationError(
+                "Gmail resume requires one exact read-preserved "
+                "destination copy for every planned message"
+            )
+
+
 def apply_local_move(
     runner: MailRunner,
     plan: Dict[str, Any],
@@ -463,6 +523,7 @@ def _apply_gmail_source_to_local(
     expected_account: str,
     allowed_destinations: Iterable[str],
     audit_path: Optional[Path] = None,
+    resume: bool = False,
 ) -> Dict[str, Any]:
     transaction_started = perf_counter()
     phase_seconds: Dict[str, float] = {}
@@ -487,24 +548,45 @@ def _apply_gmail_source_to_local(
     phase_started = perf_counter()
     gmail_messages = resolve_messages_parallel(client, plan["messages"])
     phase_seconds["gmail_preflight"] = _elapsed(phase_started)
+    if resume:
+        _require_recoverable_gmail_audit(audit_path, plan)
     for gmail_message in gmail_messages:
         labels = set(gmail_message.get("labelIds", []))
-        invalid_labels = (
-            source_label not in labels
-            or "TRASH" in labels
-            or (
-                source_label == "INBOX"
-                and "SPAM" in labels
+        if resume:
+            invalid_labels = (
+                "TRASH" in labels
+                or (source_label == "INBOX" and "SPAM" in labels)
+                or (
+                    source_label == "SPAM"
+                    and "INBOX" in labels
+                )
             )
-            or (
-                source_label == "SPAM"
-                and "INBOX" in labels
+        else:
+            invalid_labels = (
+                source_label not in labels
+                or "TRASH" in labels
+                or (
+                    source_label == "INBOX"
+                    and "SPAM" in labels
+                )
+                or (
+                    source_label == "SPAM"
+                    and "INBOX" in labels
+                )
             )
-        )
         if invalid_labels:
             raise OperationError(
                 "Gmail source labels do not match the required pre-state"
             )
+
+    if resume:
+        phase_started = perf_counter()
+        destination_rows = verify_messages(runner, plan)
+        _require_valid_resume_destinations(
+            destination_rows,
+            plan["messages"],
+        )
+        phase_seconds["local_copy"] = _elapsed(phase_started)
 
     _append_audit(
         audit_path,
@@ -513,52 +595,73 @@ def _apply_gmail_source_to_local(
             "action": plan["action"],
             "plan_hash": plan["plan_hash"],
             "message_count": len(plan["messages"]),
+            **({"resume": True} if resume else {}),
         },
     )
-    phase_started = perf_counter()
-    copied: List[Dict[str, str]] = []
-    copy_barrier_valid = True
-    copy_barrier_attempts = 0
-    for message_group in chunks(plan["messages"]):
-        arguments = [
-            "apply",
-            plan["source"]["account"],
-            plan["source"]["mailbox"],
-            plan["destination"]["path"],
-        ]
-        arguments.extend(_message_arguments(message_group))
-        group_rows = runner.run_tsv(
-            "copy_account_to_local.applescript", arguments
-        )
-        copied.extend(group_rows)
-        copy_barrier_attempts += _copy_barrier_summary(group_rows)[
-            "local_copy_barrier_attempts"
-        ]
-        if not _copy_barrier_is_valid(group_rows, message_group):
-            copy_barrier_valid = False
-            break
-    phase_seconds["local_copy"] = _elapsed(phase_started)
-    copy_summary = _copy_barrier_summary(copied)
-    copy_summary["local_copy_barrier_attempts"] = copy_barrier_attempts
-    if not copy_barrier_valid or not _copy_barrier_is_valid(
-        copied, plan["messages"]
-    ):
-        phase_seconds["transaction_total"] = _elapsed(transaction_started)
-        result = {
-            "status": "pending_local_copy",
-            "action": plan["action"],
-            "plan_hash": plan["plan_hash"],
-            **copy_summary,
-            "phase_seconds": phase_seconds,
+    if resume:
+        copy_summary = {
+            "local_copies_submitted": 0,
+            "local_copies_reused": len(plan["messages"]),
+            "local_copy_barrier_attempts": 0,
         }
-        _append_audit(audit_path, result)
-        return result
+    else:
+        phase_started = perf_counter()
+        copied: List[Dict[str, str]] = []
+        copy_barrier_valid = True
+        copy_barrier_attempts = 0
+        for message_group in chunks(plan["messages"]):
+            arguments = [
+                "apply",
+                plan["source"]["account"],
+                plan["source"]["mailbox"],
+                plan["destination"]["path"],
+            ]
+            arguments.extend(_message_arguments(message_group))
+            group_rows = runner.run_tsv(
+                "copy_account_to_local.applescript", arguments
+            )
+            copied.extend(group_rows)
+            copy_barrier_attempts += _copy_barrier_summary(group_rows)[
+                "local_copy_barrier_attempts"
+            ]
+            if not _copy_barrier_is_valid(group_rows, message_group):
+                copy_barrier_valid = False
+                break
+        phase_seconds["local_copy"] = _elapsed(phase_started)
+        copy_summary = _copy_barrier_summary(copied)
+        copy_summary["local_copy_barrier_attempts"] = (
+            copy_barrier_attempts
+        )
+        if not copy_barrier_valid or not _copy_barrier_is_valid(
+            copied, plan["messages"]
+        ):
+            phase_seconds["transaction_total"] = _elapsed(
+                transaction_started
+            )
+            result = {
+                "status": "pending_local_copy",
+                "action": plan["action"],
+                "plan_hash": plan["plan_hash"],
+                **copy_summary,
+                "phase_seconds": phase_seconds,
+            }
+            _append_audit(audit_path, result)
+            return result
 
     phase_started = perf_counter()
-    changed_ids = remove_source_labels_with_rollback(
-        client,
-        gmail_messages,
-        source_label,
+    source_messages = [
+        message
+        for message in gmail_messages
+        if source_label in set(message.get("labelIds", []))
+    ]
+    changed_ids = (
+        remove_source_labels_with_rollback(
+            client,
+            source_messages,
+            source_label,
+        )
+        if source_messages
+        else []
     )
     phase_seconds["gmail_label_removal"] = _elapsed(phase_started)
 
@@ -578,6 +681,11 @@ def _apply_gmail_source_to_local(
     result[
         "gmail_{}_labels_removed".format(source_label.casefold())
     ] = len(changed_ids)
+    if resume:
+        result["gmail_source_labels_already_absent"] = (
+            len(gmail_messages) - len(source_messages)
+        )
+        result["resume"] = True
     _append_audit(audit_path, result)
     return result
 
@@ -590,6 +698,7 @@ def apply_gmail_inbox_to_local(
     expected_account: str,
     allowed_destinations: Iterable[str],
     audit_path: Optional[Path] = None,
+    resume: bool = False,
 ) -> Dict[str, Any]:
     if plan.get("action") != "gmail_inbox_to_local":
         raise OperationError("Plan is not a Gmail Inbox-to-local transfer")
@@ -600,6 +709,7 @@ def apply_gmail_inbox_to_local(
         expected_account=expected_account,
         allowed_destinations=allowed_destinations,
         audit_path=audit_path,
+        resume=resume,
     )
 
 
@@ -611,6 +721,7 @@ def apply_gmail_spam_to_local(
     expected_account: str,
     allowed_destinations: Iterable[str],
     audit_path: Optional[Path] = None,
+    resume: bool = False,
 ) -> Dict[str, Any]:
     if plan.get("action") != "gmail_spam_to_local":
         raise OperationError("Plan is not a Gmail Spam-to-local transfer")
@@ -621,4 +732,5 @@ def apply_gmail_spam_to_local(
         expected_account=expected_account,
         allowed_destinations=allowed_destinations,
         audit_path=audit_path,
+        resume=resume,
     )

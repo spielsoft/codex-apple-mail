@@ -374,21 +374,3 @@ def get_message_records_parallel(
             }
         )
     return records
-
-
-def validate_removed_source_label(
-    message: Dict[str, Any],
-    source_label: str,
-) -> None:
-    if source_label not in MUTABLE_SOURCE_LABELS:
-        raise GmailError("Gmail source label is not allowlisted")
-    raw_labels = message.get("labelIds")
-    if not isinstance(raw_labels, list):
-        raise GmailError("Gmail label-removal response omitted labels")
-    labels = set(raw_labels)
-    if source_label in labels:
-        raise GmailError("{} label is still present".format(source_label))
-    if source_label == "SPAM" and "INBOX" in labels:
-        raise GmailError("INBOX label appeared after SPAM removal")
-    if FORBIDDEN_LABEL in labels:
-        raise GmailError("TRASH label appeared unexpectedly")

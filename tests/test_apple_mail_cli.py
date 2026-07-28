@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "skills" / "apple-mail" / "scripts"))
 
 from apple_mail.cli import (
+    build_parser,
     command_apply,
     command_get_batch,
     command_plan_spam_transfer,
@@ -47,6 +48,19 @@ class AppleMailCliTests(unittest.TestCase):
             body_limit=50000,
             timeout=120,
         )
+
+    def test_apply_parser_exposes_explicit_resume_flag(self):
+        args = build_parser().parse_args(
+            [
+                "apply",
+                "--plan",
+                "plan.json",
+                "--resume",
+                "--execute",
+            ]
+        )
+
+        self.assertTrue(args.resume)
 
     def test_get_batch_uses_one_runner_call_with_six_field_groups(self):
         with tempfile.TemporaryDirectory() as temporary:

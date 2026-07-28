@@ -1,12 +1,11 @@
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, FrozenSet, List, Optional, Sequence
+from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Tuple
 
 from .gmail import (
     FORBIDDEN_LABEL,
     MUTABLE_SOURCE_LABELS,
     GmailClient,
     GmailError,
-    validate_removed_source_label,
 )
 from .limits import GMAIL_NETWORK_WORKERS, PUBLIC_GMAIL_BATCH_LIMIT
 
@@ -77,6 +76,72 @@ def _modify_label(
         add=add,
         remove=remove,
     )
+
+
+def _response_labels(
+    response: Dict[str, Any],
+    gmail_id: str,
+) -> Optional[FrozenSet[str]]:
+    if str(response.get("id", "")) != gmail_id:
+        raise GmailError("Gmail label-removal response ID changed")
+    raw_labels = response.get("labelIds")
+    if not isinstance(raw_labels, list):
+        return None
+    return frozenset(str(label) for label in raw_labels)
+
+
+def _remove_label_snapshots(
+    client: GmailClient,
+    gmail_ids: Sequence[str],
+    label: str,
+) -> Tuple[List[Optional[FrozenSet[str]]], List[Exception]]:
+    def remove(gmail_id: str) -> Optional[FrozenSet[str]]:
+        return _response_labels(
+            _modify_label(
+                client,
+                gmail_id,
+                label,
+                remove=True,
+            ),
+            gmail_id,
+        )
+
+    snapshots: List[Optional[FrozenSet[str]]] = [
+        None for _ in gmail_ids
+    ]
+    errors: List[Exception] = []
+    with ThreadPoolExecutor(
+        max_workers=min(GMAIL_NETWORK_WORKERS, len(gmail_ids))
+    ) as executor:
+        futures = [executor.submit(remove, gmail_id) for gmail_id in gmail_ids]
+        for index, future in enumerate(futures):
+            try:
+                snapshots[index] = future.result()
+            except Exception as error:
+                errors.append(error)
+    return snapshots, errors
+
+
+def _fill_missing_snapshots(
+    client: GmailClient,
+    gmail_ids: Sequence[str],
+    snapshots: Sequence[Optional[FrozenSet[str]]],
+) -> List[Optional[FrozenSet[str]]]:
+    complete = list(snapshots)
+    missing_indices = [
+        index
+        for index, labels in enumerate(complete)
+        if labels is None
+    ]
+    if not missing_indices:
+        return complete
+    missing_labels = _read_labels(
+        client,
+        [gmail_ids[index] for index in missing_indices],
+    )
+    for index, labels in zip(missing_indices, missing_labels):
+        complete[index] = labels
+    return complete
 
 
 def _restore_source_state(
@@ -192,40 +257,11 @@ def remove_source_labels_with_rollback(
         raise GmailError("Gmail source label is not allowlisted")
     gmail_ids = _message_ids(gmail_messages)
 
-    def remove(gmail_id: str) -> None:
-        response = _modify_label(
-            client,
-            gmail_id,
-            source_label,
-            remove=True,
-        )
-        if str(response.get("id", "")) != gmail_id:
-            raise GmailError("Gmail label-removal response ID changed")
-        raw_labels = response.get("labelIds")
-        if not isinstance(raw_labels, list):
-            raise GmailError("Gmail label-removal response omitted labels")
-        if source_label == "SPAM" and "INBOX" in set(raw_labels):
-            response = _modify_label(
-                client,
-                gmail_id,
-                "INBOX",
-                remove=True,
-            )
-            if str(response.get("id", "")) != gmail_id:
-                raise GmailError("Gmail label-removal response ID changed")
-        validate_removed_source_label(response, source_label)
-
-    errors: List[Exception] = []
-    with ThreadPoolExecutor(
-        max_workers=min(GMAIL_NETWORK_WORKERS, len(gmail_ids))
-    ) as executor:
-        futures = [executor.submit(remove, gmail_id) for gmail_id in gmail_ids]
-        for future in futures:
-            try:
-                future.result()
-            except Exception as error:
-                errors.append(error)
-
+    observed_labels, errors = _remove_label_snapshots(
+        client,
+        gmail_ids,
+        source_label,
+    )
     if errors:
         _reconcile_failed_removal(
             client,
@@ -233,24 +269,69 @@ def remove_source_labels_with_rollback(
             source_label,
             errors[0],
         )
-    if source_label == "SPAM":
-        final_labels = _read_labels(client, gmail_ids)
-        invalid_count = sum(
-            labels is None
-            or source_label in labels
-            or "INBOX" in labels
-            or FORBIDDEN_LABEL in labels
-            for labels in final_labels
+
+    observed_labels = _fill_missing_snapshots(
+        client,
+        gmail_ids,
+        observed_labels,
+    )
+    if any(labels is None for labels in observed_labels):
+        _reconcile_failed_removal(
+            client,
+            gmail_ids,
+            source_label,
+            GmailError(
+                "Gmail source-label removal could not be confirmed"
+            ),
         )
-        if invalid_count:
-            _reconcile_failed_removal(
+
+    if source_label == "SPAM":
+        inbox_ids = [
+            gmail_id
+            for gmail_id, labels in zip(gmail_ids, observed_labels)
+            if labels is not None and "INBOX" in labels
+        ]
+        if inbox_ids:
+            cleanup_labels, cleanup_errors = _remove_label_snapshots(
                 client,
-                gmail_ids,
-                source_label,
-                GmailError(
-                    "Gmail SPAM removal did not reach the required final state"
-                ),
+                inbox_ids,
+                "INBOX",
             )
+            if cleanup_errors:
+                _reconcile_failed_removal(
+                    client,
+                    gmail_ids,
+                    source_label,
+                    cleanup_errors[0],
+                )
+            cleanup_labels = _fill_missing_snapshots(
+                client,
+                inbox_ids,
+                cleanup_labels,
+            )
+            cleanup_by_id = dict(zip(inbox_ids, cleanup_labels))
+            for index, gmail_id in enumerate(gmail_ids):
+                if gmail_id in cleanup_by_id:
+                    observed_labels[index] = cleanup_by_id[gmail_id]
+
+    final_labels = observed_labels
+    invalid_count = sum(
+        labels is None
+        or source_label in labels
+        or FORBIDDEN_LABEL in labels
+        or (source_label == "SPAM" and "INBOX" in labels)
+        for labels in final_labels
+    )
+    if invalid_count:
+        _reconcile_failed_removal(
+            client,
+            gmail_ids,
+            source_label,
+            GmailError(
+                "Gmail source-label removal did not reach the required "
+                "final state"
+            ),
+        )
     return gmail_ids
 
 

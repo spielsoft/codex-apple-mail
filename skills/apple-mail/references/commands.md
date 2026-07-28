@@ -162,6 +162,15 @@ Use a list or an object containing `messages`, `items`, or `records`:
   --audit audit.jsonl \
   --execute
 
+"$APPLE_MAIL" apply \
+  --plan transfer-plan.json \
+  --allow-destination "On My Mac/Review" \
+  --token gmail-token.json \
+  --expected-account "person@example.com" \
+  --audit audit.jsonl \
+  --resume \
+  --execute
+
 "$APPLE_MAIL" verify --plan transfer-plan.json
 
 "$APPLE_MAIL" reconcile \
@@ -220,6 +229,15 @@ diagnostics are needed; unlike `reconcile`, it does not append a lifecycle
 event. `DESTINATION_COUNT=1` already denotes one fully identity-matching copy:
 the verifier rejects Message-ID collisions and counts only full identity
 matches.
+
+`--resume` is a mutation mode only for a Gmail transfer whose same audit ends
+in `operation_failed` or `mutation_state_unknown` after an earlier
+`operation_started`. It first verifies one exact, read-preserved destination
+copy for every planned message. It submits no Mail copy, accepts only the
+action-specific Gmail source label being either present or already absent,
+and removes the label only from the still-present subset. Spam resume also
+requires `INBOX` absent before proceeding. A normal apply remains strict and
+requires the source label on every selected Gmail message.
 
 ## OAuth
 

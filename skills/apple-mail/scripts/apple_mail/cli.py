@@ -295,6 +295,12 @@ def command_probe_copy(args: argparse.Namespace) -> None:
 def command_apply(args: argparse.Namespace) -> None:
     plan = read_json(args.plan)
     require_allowed_destination(plan, args.allow_destination)
+    resume = bool(getattr(args, "resume", False))
+    if resume and plan["action"] not in (
+        "gmail_inbox_to_local",
+        "gmail_spam_to_local",
+    ):
+        raise ValueError("--resume is valid only for Gmail transfer plans")
     if not args.execute:
         _print_json(
             {
@@ -303,6 +309,7 @@ def command_apply(args: argparse.Namespace) -> None:
                 "plan_hash": plan["plan_hash"],
                 "message_count": len(plan.get("messages", [])),
                 "destination": plan.get("destination"),
+                **({"resume": True} if resume else {}),
             }
         )
         return
@@ -344,6 +351,7 @@ def command_apply(args: argparse.Namespace) -> None:
                 expected_account=args.expected_account,
                 allowed_destinations=args.allow_destination,
                 audit_path=args.audit,
+                resume=resume,
             )
         else:
             raise ValueError("Unsupported plan action")
@@ -479,6 +487,14 @@ def build_parser() -> argparse.ArgumentParser:
     apply_parser.add_argument("--audit", type=Path)
     apply_parser.add_argument("--token", type=Path)
     apply_parser.add_argument("--expected-account")
+    apply_parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Resume a previously started and failed Gmail transfer after "
+            "verifying every exact destination copy"
+        ),
+    )
     apply_parser.add_argument("--execute", action="store_true")
     apply_parser.set_defaults(handler=command_apply)
 

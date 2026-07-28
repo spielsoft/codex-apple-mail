@@ -1,3 +1,4 @@
+import json
 import tempfile
 import sys
 import unittest
@@ -433,6 +434,202 @@ class AppleMailOperationTests(unittest.TestCase):
                 ("gmail-1", "INBOX", False, True),
             ],
         )
+
+    def test_spam_removal_corroborates_omitted_response_labels(self):
+        class OmittedLabelsClient:
+            def __init__(self):
+                self.labels = {"SPAM", "IMPORTANT"}
+                self.modifications = []
+                self.metadata_calls = 0
+
+            def modify_label(
+                self, gmail_id, label, *, add=False, remove=False
+            ):
+                self.modifications.append((gmail_id, label, add, remove))
+                if add:
+                    self.labels.add(label)
+                else:
+                    self.labels.discard(label)
+                    if label == "SPAM":
+                        self.labels.add("INBOX")
+                return {"id": gmail_id}
+
+            def get_metadata(self, gmail_id):
+                self.metadata_calls += 1
+                return {
+                    "id": gmail_id,
+                    "labelIds": sorted(self.labels),
+                }
+
+        client = OmittedLabelsClient()
+        changed = remove_spam_labels_with_rollback(
+            client,
+            [{"id": "gmail-1", "labelIds": ["SPAM", "IMPORTANT"]}],
+        )
+
+        self.assertEqual(changed, ["gmail-1"])
+        self.assertEqual(client.labels, {"IMPORTANT"})
+        self.assertEqual(
+            client.modifications,
+            [
+                ("gmail-1", "SPAM", False, True),
+                ("gmail-1", "INBOX", False, True),
+            ],
+        )
+        self.assertEqual(client.metadata_calls, 2)
+
+    def test_gmail_resume_finishes_only_present_subset_after_copy_check(self):
+        selected_messages = messages(2)
+        plan = build_message_plan(
+            "gmail_spam_to_local",
+            account_source("person@example.com", "Junk"),
+            selected_messages,
+            destination=local_destination("On My Mac/Review"),
+        )
+        destination_rows = [
+            {
+                "MAIL_ID": str(message["mail_id"]),
+                "DESTINATION_COUNT": "1",
+                "DESTINATION_READ": (
+                    "true" if message["read"] else "false"
+                ),
+            }
+            for message in selected_messages
+        ]
+        runner = SequencedRunner([destination_rows])
+
+        class PartialSpamClient:
+            def __init__(self):
+                self.labels = {
+                    "gmail-0": {"SPAM", "IMPORTANT"},
+                    "gmail-1": {"IMPORTANT"},
+                }
+                self.modifications = []
+
+            def profile(self):
+                return {"emailAddress": "person@example.com"}
+
+            def list_by_rfc_message_id(self, message_id):
+                index = message_id.split("@", 1)[0].split("-")[-1]
+                return [{"id": "gmail-{}".format(index)}]
+
+            def get_metadata(self, gmail_id):
+                index = int(gmail_id.split("-")[-1])
+                message = selected_messages[index]
+                return {
+                    "id": gmail_id,
+                    "labelIds": sorted(self.labels[gmail_id]),
+                    "payload": {
+                        "headers": [
+                            {
+                                "name": "Message-ID",
+                                "value": "<{}>".format(
+                                    message["message_id"]
+                                ),
+                            },
+                            {
+                                "name": "Subject",
+                                "value": message["subject"],
+                            },
+                            {
+                                "name": "From",
+                                "value": message["sender"],
+                            },
+                        ]
+                    },
+                }
+
+            def modify_label(
+                self, gmail_id, label, *, add=False, remove=False
+            ):
+                self.modifications.append((gmail_id, label, add, remove))
+                if add:
+                    self.labels[gmail_id].add(label)
+                else:
+                    self.labels[gmail_id].discard(label)
+                return {
+                    "id": gmail_id,
+                    "labelIds": sorted(self.labels[gmail_id]),
+                }
+
+        with tempfile.TemporaryDirectory() as temporary:
+            audit = Path(temporary) / "audit.jsonl"
+            audit.write_text(
+                "\n".join(
+                    json.dumps(event)
+                    for event in (
+                        {
+                            "status": "operation_started",
+                            "action": plan["action"],
+                            "plan_hash": plan["plan_hash"],
+                        },
+                        {
+                            "status": "operation_failed",
+                            "action": plan["action"],
+                            "plan_hash": plan["plan_hash"],
+                        },
+                    )
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            client = PartialSpamClient()
+            result = apply_gmail_spam_to_local(
+                runner,
+                client,
+                plan,
+                expected_account="person@example.com",
+                allowed_destinations=["On My Mac/Review"],
+                audit_path=audit,
+                resume=True,
+            )
+
+        self.assertEqual(result["status"], "pending_mail_sync")
+        self.assertTrue(result["resume"])
+        self.assertEqual(result["local_copies_submitted"], 0)
+        self.assertEqual(result["local_copies_reused"], 2)
+        self.assertEqual(result["gmail_spam_labels_removed"], 1)
+        self.assertEqual(result["gmail_source_labels_already_absent"], 1)
+        self.assertEqual(client.labels["gmail-0"], {"IMPORTANT"})
+        self.assertEqual(client.labels["gmail-1"], {"IMPORTANT"})
+        self.assertEqual(
+            client.modifications,
+            [("gmail-0", "SPAM", False, True)],
+        )
+        self.assertNotIn(
+            "copy_account_to_local.applescript",
+            [call[0] for call in runner.calls],
+        )
+        self.assertEqual(
+            [call[0] for call in runner.calls],
+            [
+                "verify_messages.applescript",
+                "synchronize_account.applescript",
+            ],
+        )
+
+    def test_gmail_resume_requires_existing_failed_lifecycle(self):
+        plan = build_message_plan(
+            "gmail_spam_to_local",
+            account_source("person@example.com", "Junk"),
+            [MESSAGE],
+            destination=local_destination("On My Mac/Review"),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            audit = Path(temporary) / "missing-audit.jsonl"
+            with self.assertRaisesRegex(
+                OperationError,
+                "existing audit file",
+            ):
+                apply_gmail_spam_to_local(
+                    SequencedRunner(),
+                    FakeGmailClient(),
+                    plan,
+                    expected_account="person@example.com",
+                    allowed_destinations=["On My Mac/Review"],
+                    audit_path=audit,
+                    resume=True,
+                )
 
     def test_gmail_label_change_happens_only_after_copy_barrier_returns(self):
         barrier_state = {"returned": False}

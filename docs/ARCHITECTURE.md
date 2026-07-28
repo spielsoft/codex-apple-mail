@@ -86,6 +86,15 @@ concurrent workers; each label change still requires its own confirmed
 outcome. Mail Apple Events remain serial and transfer selectors are chunked at
 ten messages.
 
+Modify responses must bind the immutable Gmail ID. A complete returned label
+snapshot is authoritative; when Gmail omits `labelIds`, a targeted metadata
+read fills that missing snapshot before the transaction can continue.
+Complete snapshots identify Spam-created `INBOX` labels, gate cleanup, and
+confirm the final state. Explicit resume is available only for the same plan
+and audit after a started-and-failed lifecycle. It verifies every destination
+copy through Mail, skips copying, and removes the source label only from the
+Gmail subset where it remains present.
+
 After source-label removal, Mail can raise error `-1719` while an indexed source
 filter is disappearing instead of returning an empty collection. The indexed
 lookup boundary normalizes only that error to zero matches; other Mail errors
