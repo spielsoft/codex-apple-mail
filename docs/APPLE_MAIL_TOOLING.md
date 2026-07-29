@@ -174,17 +174,18 @@ not-spam transition. A failed Junk transaction restores `SPAM`, ensures
 reporting rollback.
 
 During execution, each copy-script invocation resolves its complete bounded
-numeric-ID selector once, validates every source, and rechecks destination
-visibility after fixed 1.5 and 4.8 second delays for at most 6.3 seconds after
-`duplicate`. It stops after the first complete snapshot. Any incomplete chunk
-returns `pending_local_copy` without changing Gmail; a later retry safely
-reuses exact local copies already accepted from earlier chunks.
+numeric-ID selector once, validates every source, and submits its missing
+copies without waiting on that chunk's asynchronous visibility. After all
+independently validated chunks return, one whole-plan barrier re-resolves all
+sources and destinations on the fixed 5- and 10-second schedule. Any
+incomplete whole-plan barrier returns `pending_local_copy` without changing
+Gmail; a later retry safely reuses exact local copies already submitted.
 
 Execution reports `phase_seconds` for Gmail profile lookup, Gmail preflight,
 local copy, Gmail label removal, Mail synchronization, and total transaction
-time. These timings contain no message content. The copy script is the
-authoritative Mail preflight and local-copy barrier, so execution does not
-launch redundant full verifier processes before or immediately after it.
+time. These timings contain no message content. The copy script owns source
+validation and submission; the bounded whole-plan verifier is the
+authoritative durability barrier.
 
 During Mail synchronization, an indexed read can transiently fail with Mail
 error `-10000`. Verification retries only that exact read after 0.1, 0.2, 0.4,

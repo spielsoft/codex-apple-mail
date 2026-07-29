@@ -339,7 +339,7 @@ class AppleMailOperationTests(unittest.TestCase):
         self.assertEqual(result["status"], "pending_mail_sync")
         self.assertEqual(result["local_copies_submitted"], 1)
         self.assertEqual(result["local_copies_reused"], 0)
-        self.assertEqual(result["local_copy_barrier_attempts"], 2)
+        self.assertEqual(result["local_copy_barrier_attempts"], 0)
         self.assertIn("gmail_preflight", result["phase_seconds"])
         self.assertIn("gmail_label_removal", result["phase_seconds"])
         self.assertIn("transaction_total", result["phase_seconds"])
@@ -357,7 +357,7 @@ class AppleMailOperationTests(unittest.TestCase):
             for call in runner.calls
             if call[0] == "copy_account_to_local.applescript"
         )
-        self.assertEqual(copy_call[1][0], "apply")
+        self.assertEqual(copy_call[1][0], "submit")
 
     def test_gmail_spam_transfer_cleans_up_automatic_inbox_label(self):
         plan = build_message_plan(
@@ -695,19 +695,27 @@ class AppleMailOperationTests(unittest.TestCase):
         for barrier in invalid_barriers:
             with self.subTest(barrier=barrier):
                 runner = SequencedRunner(
+                    verifications=[
+                        verification(destination_count="0"),
+                        verification(destination_count="0"),
+                    ],
                     script_results={
                         "copy_account_to_local.applescript": barrier
                     },
                 )
                 client = FakeGmailClient()
 
-                result = apply_gmail_inbox_to_local(
-                    runner,
-                    client,
-                    plan,
-                    expected_account="person@example.com",
-                    allowed_destinations=["On My Mac/Review"],
-                )
+                with patch(
+                    "apple_mail.operations.sleep",
+                    return_value=None,
+                ):
+                    result = apply_gmail_inbox_to_local(
+                        runner,
+                        client,
+                        plan,
+                        expected_account="person@example.com",
+                        allowed_destinations=["On My Mac/Review"],
+                    )
 
                 self.assertEqual(result["status"], "pending_local_copy")
                 self.assertEqual(result["local_copy_barrier_attempts"], 2)
@@ -757,24 +765,47 @@ class AppleMailOperationTests(unittest.TestCase):
             def run_tsv(self, script, arguments=()):
                 nonlocal copy_call_count
                 self.calls.append((script, list(arguments)))
-                if script != "copy_account_to_local.applescript":
-                    return [{"STATUS": "OK"}]
-                copy_call_count += 1
-                group = []
-                for offset in range(4, len(arguments), 6):
-                    group.append(
+                if script == "copy_account_to_local.applescript":
+                    copy_call_count += 1
+                    return [
                         {
                             "MAIL_ID": arguments[offset],
                             "STATUS": "COPIED",
+                            "DESTINATION_COUNT": "0",
+                            "DESTINATION_READ": "",
+                            "DESTINATION_IDENTITY": "false",
+                            "BARRIER_ATTEMPTS": "0",
+                        }
+                        for offset in range(4, len(arguments), 6)
+                    ]
+                if script == "verify_messages.applescript":
+                    rows = [
+                        {
+                            "MAIL_ID": arguments[offset],
+                            "SOURCE_ID_COUNT": "1",
+                            "SOURCE_BULK_COUNT": "10",
+                            "SOURCE_IDENTITY": "true",
+                            "SOURCE_MESSAGE_ID_MATCH": "true",
+                            "SOURCE_SUBJECT_MATCH": "true",
+                            "SOURCE_SENDER_MATCH": "true",
+                            "SOURCE_RECEIVED_AT_MATCH": "true",
+                            "SOURCE_READ": arguments[offset + 5],
                             "DESTINATION_COUNT": "1",
                             "DESTINATION_READ": arguments[offset + 5],
-                            "DESTINATION_IDENTITY": "true",
-                            "BARRIER_ATTEMPTS": "1",
                         }
+                        for offset in range(5, len(arguments), 6)
+                    ]
+                    verification_call_count = len(
+                        [
+                            call
+                            for call in self.calls
+                            if call[0] == "verify_messages.applescript"
+                        ]
                     )
-                if copy_call_count == 5:
-                    all_copy_calls_returned["value"] = True
-                return group
+                    if verification_call_count == 5:
+                        all_copy_calls_returned["value"] = True
+                    return rows
+                return [{"STATUS": "OK"}]
 
         class ScaleClient:
             def __init__(self):
@@ -822,13 +853,14 @@ class AppleMailOperationTests(unittest.TestCase):
 
         runner = ChunkRunner()
         client = ScaleClient()
-        result = apply_gmail_inbox_to_local(
-            runner,
-            client,
-            plan,
-            expected_account="person@example.com",
-            allowed_destinations=["On My Mac/Review"],
-        )
+        with patch("apple_mail.operations.sleep", return_value=None):
+            result = apply_gmail_inbox_to_local(
+                runner,
+                client,
+                plan,
+                expected_account="person@example.com",
+                allowed_destinations=["On My Mac/Review"],
+            )
 
         copy_calls = [
             call
@@ -842,12 +874,15 @@ class AppleMailOperationTests(unittest.TestCase):
                 for _, arguments in copy_calls
             )
         )
+        self.assertTrue(
+            all(arguments[0] == "submit" for _, arguments in copy_calls)
+        )
         self.assertEqual(len(client.modifications), 50)
         self.assertEqual(result["gmail_inbox_labels_removed"], 50)
         self.assertEqual(result["local_copies_submitted"], 50)
-        self.assertEqual(result["local_copy_barrier_attempts"], 5)
+        self.assertEqual(result["local_copy_barrier_attempts"], 1)
 
-    def test_invalid_later_copy_chunk_prevents_every_gmail_mutation(self):
+    def test_slow_first_chunk_submits_later_chunks_but_blocks_gmail(self):
         selected_messages = messages(20)
         plan = build_message_plan(
             "gmail_inbox_to_local",
@@ -859,27 +894,46 @@ class AppleMailOperationTests(unittest.TestCase):
         class LaterFailureRunner(SequencedRunner):
             def run_tsv(self, script, arguments=()):
                 self.calls.append((script, list(arguments)))
-                copy_number = len(
-                    [
-                        call
-                        for call in self.calls
-                        if call[0] == "copy_account_to_local.applescript"
+                if script == "verify_messages.applescript":
+                    verification_number = len(
+                        [
+                            call
+                            for call in self.calls
+                            if call[0] == "verify_messages.applescript"
+                        ]
+                    )
+                    group_number = ((verification_number - 1) % 2) + 1
+                    return [
+                        {
+                            "MAIL_ID": arguments[offset],
+                            "SOURCE_ID_COUNT": "1",
+                            "SOURCE_BULK_COUNT": "10",
+                            "SOURCE_IDENTITY": "true",
+                            "SOURCE_MESSAGE_ID_MATCH": "true",
+                            "SOURCE_SUBJECT_MATCH": "true",
+                            "SOURCE_SENDER_MATCH": "true",
+                            "SOURCE_RECEIVED_AT_MATCH": "true",
+                            "SOURCE_READ": arguments[offset + 5],
+                            "DESTINATION_COUNT": (
+                                "0" if group_number == 2 else "1"
+                            ),
+                            "DESTINATION_READ": (
+                                "" if group_number == 2
+                                else arguments[offset + 5]
+                            ),
+                        }
+                        for offset in range(5, len(arguments), 6)
                     ]
-                )
                 rows = []
                 for offset in range(4, len(arguments), 6):
                     rows.append(
                         {
                             "MAIL_ID": arguments[offset],
                             "STATUS": "COPIED",
-                            "DESTINATION_COUNT": (
-                                "0" if copy_number == 2 else "1"
-                            ),
-                            "DESTINATION_READ": arguments[offset + 5],
-                            "DESTINATION_IDENTITY": (
-                                "false" if copy_number == 2 else "true"
-                            ),
-                            "BARRIER_ATTEMPTS": "2",
+                            "DESTINATION_COUNT": "0",
+                            "DESTINATION_READ": "",
+                            "DESTINATION_IDENTITY": "false",
+                            "BARRIER_ATTEMPTS": "0",
                         }
                     )
                 return rows
@@ -899,17 +953,28 @@ class AppleMailOperationTests(unittest.TestCase):
                 "apple_mail.operations.remove_source_labels_with_rollback"
             ) as remove_labels,
         ):
-            result = apply_gmail_inbox_to_local(
-                runner,
-                client,
-                plan,
-                expected_account="person@example.com",
-                allowed_destinations=["On My Mac/Review"],
-            )
+            with patch("apple_mail.operations.sleep", return_value=None):
+                result = apply_gmail_inbox_to_local(
+                    runner,
+                    client,
+                    plan,
+                    expected_account="person@example.com",
+                    allowed_destinations=["On My Mac/Review"],
+                )
 
         self.assertEqual(result["status"], "pending_local_copy")
         self.assertEqual(result["local_copies_submitted"], 20)
-        self.assertEqual(result["local_copy_barrier_attempts"], 4)
+        self.assertEqual(result["local_copy_barrier_attempts"], 2)
+        self.assertEqual(
+            len(
+                [
+                    call
+                    for call in runner.calls
+                    if call[0] == "copy_account_to_local.applescript"
+                ]
+            ),
+            2,
+        )
         remove_labels.assert_not_called()
         self.assertNotIn(
             "synchronize_account.applescript",

@@ -64,10 +64,13 @@ selection schema.
 7. Never change Mail without a hashed plan and explicit `--execute`.
 8. Supply every destination again through exact `--allow-destination`.
 9. Require an append-only audit path for execution.
-10. If a Gmail transfer is pending synchronization, run one later `reconcile`
+10. Gmail transfer copy chunks are submitted serially, then one bounded
+    whole-plan barrier must confirm every exact, read-preserved local copy
+    before any Gmail label can change.
+11. If a Gmail transfer is pending synchronization, run one later `reconcile`
    with the same plan and audit; do not repeat the mutation or poll
    continuously. Continue only after reconciliation reports `complete`.
-11. If execution records `operation_failed` or `mutation_state_unknown` after
+12. If execution records `operation_failed` or `mutation_state_unknown` after
     the local-copy barrier, do not reapply normally. Use explicit `--resume`
     with the same plan and audit; it proceeds only after every destination
     copy is exact and the audit proves a prior started-and-failed lifecycle.

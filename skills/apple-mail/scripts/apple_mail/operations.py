@@ -1,7 +1,7 @@
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, sleep
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from .gmail import (
@@ -14,7 +14,7 @@ from .limits import (
     PUBLIC_GMAIL_BATCH_LIMIT,
     chunks,
 )
-from .mail import MailRunner
+from .mail import MailRunner, MailScriptError
 from .plans import (
     GMAIL_TRANSFER_ACTIONS,
     GMAIL_TRANSFER_SOURCE_LABELS,
@@ -25,6 +25,9 @@ from .plans import (
 
 class OperationError(RuntimeError):
     pass
+
+
+_WHOLE_PLAN_COPY_BARRIER_DELAYS = (5.0, 5.0)
 
 
 def _bool_text(value: bool) -> str:
@@ -306,6 +309,30 @@ def _copy_barrier_summary(
         ),
         "local_copy_barrier_attempts": max(attempts or [0]),
     }
+
+
+def _verify_whole_plan_copy_barrier(
+    runner: MailRunner,
+    plan: Dict[str, Any],
+) -> tuple:
+    attempts = 0
+    for delay in _WHOLE_PLAN_COPY_BARRIER_DELAYS:
+        sleep(delay)
+        attempts += 1
+        try:
+            rows = verify_messages(runner, plan)
+        except (MailScriptError, OperationError):
+            continue
+        if (
+            not _source_mismatches(rows, plan["messages"])
+            and _destinations_are_valid(
+                rows,
+                plan["messages"],
+                required=True,
+            )
+        ):
+            return True, attempts
+    return False, attempts
 
 
 def _append_audit(path: Optional[Path], event: Dict[str, Any]) -> None:
@@ -607,11 +634,9 @@ def _apply_gmail_source_to_local(
     else:
         phase_started = perf_counter()
         copied: List[Dict[str, str]] = []
-        copy_barrier_valid = True
-        copy_barrier_attempts = 0
         for message_group in chunks(plan["messages"]):
             arguments = [
-                "apply",
+                "submit",
                 plan["source"]["account"],
                 plan["source"]["mailbox"],
                 plan["destination"]["path"],
@@ -621,20 +646,19 @@ def _apply_gmail_source_to_local(
                 "copy_account_to_local.applescript", arguments
             )
             copied.extend(group_rows)
-            copy_barrier_attempts += _copy_barrier_summary(group_rows)[
-                "local_copy_barrier_attempts"
-            ]
-            if not _copy_barrier_is_valid(group_rows, message_group):
-                copy_barrier_valid = False
-                break
-        phase_seconds["local_copy"] = _elapsed(phase_started)
         copy_summary = _copy_barrier_summary(copied)
-        copy_summary["local_copy_barrier_attempts"] = (
-            copy_barrier_attempts
+        copy_barrier_valid = _copy_barrier_is_valid(
+            copied,
+            plan["messages"],
         )
-        if not copy_barrier_valid or not _copy_barrier_is_valid(
-            copied, plan["messages"]
-        ):
+        barrier_attempts = 0
+        if not copy_barrier_valid:
+            copy_barrier_valid, barrier_attempts = (
+                _verify_whole_plan_copy_barrier(runner, plan)
+            )
+        copy_summary["local_copy_barrier_attempts"] = barrier_attempts
+        phase_seconds["local_copy"] = _elapsed(phase_started)
+        if not copy_barrier_valid:
             phase_seconds["transaction_total"] = _elapsed(
                 transaction_started
             )

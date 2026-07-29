@@ -33,12 +33,13 @@ For Gmail Inbox- or Spam-to-local:
    or a redundant verifier process before the copy script.
 3. Submit one bulk `duplicate` command per internal chunk using a direct
    numeric-ID-filtered Mail object specifier capped at ten transfer messages.
-   Do not begin Gmail mutation until every chunk's local-copy barrier passes.
-4. For each submitted chunk, refresh destination Message-IDs after `duplicate`
-   and corroborate only the matching candidates. Because Mail may expose copies
-   asynchronously, take snapshots after fixed 1.5 and 4.8 second delays,
-   stopping after the first complete snapshot. Treat the final result as the
-   local-copy barrier; never poll beyond the same 6.3-second wait bound.
+   A slow-settling chunk does not block submission of later independently
+   validated chunks.
+4. After all chunks have returned, run one bounded whole-plan durability
+   barrier. Re-resolve every source and require exactly one identity-matching,
+   read-preserved local copy for every plan item on the fixed 5- and 10-second
+   schedule. Never poll continuously. Do not begin any Gmail mutation unless
+   this complete barrier passes.
 5. Remove only the action-specific Gmail source label with bounded concurrent
    per-message responses. Bind response IDs and accept complete returned label
    snapshots; issue targeted metadata reads for responses that omit

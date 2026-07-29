@@ -202,12 +202,13 @@ executes the copy AppleScript's bounded source-selector resolution, in-memory
 identity corroboration, destination candidate, and selector-count path,
 reports copied/reused aggregate counts, and exits before `duplicate`. Gmail
 transfer plans are capped at fifty messages per transaction. Mail copy and
-verification work is split into ordered chunks of at most ten messages; Gmail
-label removal does not begin until the local-copy barrier has passed for every
-chunk.
-Execution checks each submitted chunk's destination visibility after fixed 1.5
-and 4.8 second delays for at most 6.3 seconds after `duplicate`; it never polls
-continuously.
+verification work is split into ordered chunks of at most ten messages. All
+independently validated chunks are submitted serially before one bounded
+whole-plan durability barrier runs on the fixed 5- and 10-second schedule. The
+barrier re-resolves every source and requires exactly one identity-matching,
+read-preserved destination copy for every plan item. It never polls
+continuously, and Gmail label removal cannot begin until the complete barrier
+passes.
 
 After confirmed Gmail label removal, execution requests one Mail
 synchronization and returns `pending_mail_sync` without launching a

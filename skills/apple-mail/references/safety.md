@@ -20,11 +20,12 @@ caller-supplied destination allowlist, `--execute`, bounded batch, batch
 verification, and append-only audit.
 
 For Gmail transfers, the only mutable source labels are `INBOX` and `SPAM`.
-The complete local-copy barrier must pass before either is removed. Inbox
-rollback restores `INBOX`. Spam rollback restores `SPAM` and ensures `INBOX`
-is absent. A successful Spam transfer also removes `INBOX` if Gmail adds it
-while the message is marked not spam. A message remaining in All Mail is
-expected.
+All independently validated local-copy chunks are submitted serially, then one
+bounded whole-plan barrier must confirm every exact, read-preserved local copy
+before either source label is removed. Inbox rollback restores `INBOX`. Spam
+rollback restores `SPAM` and ensures `INBOX` is absent. A successful Spam
+transfer also removes `INBOX` if Gmail adds it while the message is marked not
+spam. A message remaining in All Mail is expected.
 
 Reading an exact Sent, Important, custom-label, Trash, or other account
 mailbox does not authorize any Gmail label mutation.

@@ -51,7 +51,8 @@ Every mutation must:
 7. operate on one bounded batch, at most 250 messages;
 8. use one bulk Mail command per bounded internal chunk, not a process per
    message;
-9. verify the local copy barrier before Gmail mutation, request one Mail
+9. submit every independently validated local-copy chunk serially, then verify
+   one bounded whole-plan copy barrier before Gmail mutation, request one Mail
    synchronization afterward, and report the cache state as pending until one
    later bounded reconciliation rather than querying or polling immediately;
    and

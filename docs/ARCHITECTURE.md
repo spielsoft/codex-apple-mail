@@ -37,13 +37,13 @@ Every message plan carries:
 
 A batch binds by numeric ID and validates all corroborators. Gmail transfers
 then submit ordered internal chunks of at most ten numeric-ID-filtered Mail
-object specifiers to bulk `duplicate`; Gmail label mutation waits until every
-chunk's local-copy barrier passes. Local moves retain their single bounded
-bulk `move`. A materialized AppleScript list is not a Mail object specifier and
-must not be used as the command's direct parameter. Capture the candidate count
-before padding a selector list: AppleScript list concatenation can retain
-shared mutable backing. The implementation never scans a large source once per
-RFC Message-ID.
+object specifiers to bulk `duplicate`; Gmail label mutation waits for one
+bounded whole-plan barrier after every chunk has returned. Local moves retain
+their single bounded bulk `move`. A materialized AppleScript list is not a Mail
+object specifier and must not be used as the command's direct parameter.
+Capture the candidate count before padding a selector list: AppleScript list
+concatenation can retain shared mutable backing. The implementation never scans
+a large source once per RFC Message-ID.
 
 ## Plan actions
 
@@ -61,11 +61,15 @@ requires `--execute`; destination-bearing plans also require an exact
 
 AppleScript cross-store `move` does not reliably remove Gmail source labels.
 The copy script resolves one bounded numeric-ID selector, validates every
-source from that result, bulk-copies missing local messages, and verifies the
-complete destination. Plans above ten messages invoke this copy boundary in
-ordered ten-message chunks. The transaction then removes the action-specific
-Gmail source label. A Spam transaction also removes `INBOX` if Gmail adds it
-while removing `SPAM`. It requests one Mail synchronization and returns
+source from that result, and bulk-copies missing local messages. Plans above
+ten messages submit every independently validated ten-message chunk before a
+single bounded whole-plan durability barrier. The barrier re-resolves every
+source and requires exactly one read-preserved local destination copy for every
+planned identity. A slow-settling chunk therefore cannot prevent later safe
+copy submissions, while Gmail mutation remains impossible until the complete
+plan is durable. The transaction then removes the action-specific Gmail source
+label. A Spam transaction also removes `INBOX` if Gmail adds it while removing
+`SPAM`. It requests one Mail synchronization and returns
 `pending_mail_sync` rather than
 immediately querying the cache that it just asked to synchronize; one later
 bounded, audited reconciliation gates the next sequential block.
